@@ -1,0 +1,37 @@
+# Worker image: spawned per-issue, contains pi agent and tools.
+# Based on a devcontainer-like setup so pi can work inside it.
+
+FROM mcr.microsoft.com/devcontainers/base:ubuntu
+
+# Tools pi needs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    jq \
+    chromium-browser \
+    && rm -rf /var/lib/apt/lists/*
+
+# mise (version manager) + Node.js
+RUN curl -fsSL https://mise.run | sh \
+    && /root/.local/bin/mise install node@lts \
+    && /root/.local/bin/mise use node@lts
+ENV PATH="/root/.local/bin:/root/.local/share/mise/shims:${PATH}"
+
+# GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# pi agent
+RUN npm install -g @earendil-works/pi-coding-agent
+
+# agent-browser
+RUN npm install -g agent-browser && agent-browser install
+
+# Entrypoint script
+COPY worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
+RUN chmod +x /usr/local/bin/worker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]

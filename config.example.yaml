@@ -1,0 +1,34 @@
+# Otto configuration
+listen_addr: ":9423"
+webhook_path: "/webhook"
+max_workers: 5
+media_dir: "./media"
+base_url: "https://otto.francesco-bruno.com"
+
+github:
+  app_id: 0
+  installation_id: 0
+  private_key_file: "/etc/otto/github-app.pem"
+  webhook_secret: ""
+
+queue:
+  type: memory
+
+pi:
+  settings:
+    default_provider: anthropic
+    default_model: claude-sonnet-4-20250514
+    default_thinking_level: medium
+  # models: |
+  #   {
+  #     "providers": {
+  #       "ollama": {
+  #         "baseUrl": "http://localhost:11434/v1",
+  #         "api": "openai-completions",
+  #         "apiKey": "ollama",
+  #         "models": [
+  #           { "id": "llama3.1:8b" }
+  #         ]
+  #       }
+  #     }
+  #   }

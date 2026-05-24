@@ -1,0 +1,108 @@
+package webhook
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+)
+
+const (
+	EventIssue              = "issues"
+	EventIssueComment       = "issue_comment"
+	EventPullRequestReview  = "pull_request_review_comment"
+	SignatureHeader         = "X-Hub-Signature-256"
+)
+
+// Payload is a partial GitHub webhook payload — just what Otto needs.
+type Payload struct {
+	Action  string      `json:"action"`
+	Issue   *IssueData  `json:"issue,omitempty"`
+	Comment *CommentData `json:"comment,omitempty"`
+	Repo    *RepoData   `json:"repository,omitempty"`
+}
+
+type IssueData struct {
+	Number      int         `json:"number"`
+	Title       string      `json:"title"`
+	Body        string      `json:"body"`
+	URL         string      `json:"html_url"`
+	PullRequest *struct{}   `json:"pull_request,omitempty"` // present if this is a PR
+}
+
+func (i *IssueData) IsPullRequest() bool {
+	return i != nil && i.PullRequest != nil
+}
+
+type CommentData struct {
+	Body string `json:"body"`
+}
+
+type RepoData struct {
+	FullName string `json:"full_name"`
+	CloneURL string `json:"clone_url"`
+	Owner    struct {
+		Login string `json:"login"`
+	} `json:"owner"`
+	Name string `json:"name"`
+}
+
+// IsMentioned returns whether @otto appears in any of the given text fields.
+var ottoMention = regexp.MustCompile(`(?i)@otto\b`)
+
+func IsMentioned(texts ...string) bool {
+	for _, t := range texts {
+		if ottoMention.MatchString(t) {
+			return true
+		}
+	}
+	return false
+}
+
+// Parse reads and validates a webhook request.
+func Parse(r *http.Request, secret string) (*Payload, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading body: %w", err)
+	}
+	defer r.Body.Close()
+
+	if secret != "" {
+		if err := verifySignature(r.Header.Get(SignatureHeader), body, secret); err != nil {
+			return nil, err
+		}
+	}
+
+	var p Payload
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("decoding payload: %w", err)
+	}
+
+	return &p, nil
+}
+
+func verifySignature(sigHeader string, body []byte, secret string) error {
+	if sigHeader == "" {
+		return fmt.Errorf("missing signature header")
+	}
+	if len(sigHeader) < 7 || sigHeader[:7] != "sha256=" {
+		return fmt.Errorf("invalid signature format")
+	}
+	expected, err := hex.DecodeString(sigHeader[7:])
+	if err != nil {
+		return fmt.Errorf("decoding signature: %w", err)
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	actual := mac.Sum(nil)
+
+	if !hmac.Equal(expected, actual) {
+		return fmt.Errorf("signature mismatch")
+	}
+	return nil
+}

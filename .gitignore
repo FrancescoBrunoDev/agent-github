@@ -1,0 +1,16 @@
+# Binary
+/otto
+
+# Config (contains secrets)
+config.yaml
+
+# Media uploads
+/media/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
