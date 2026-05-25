@@ -125,6 +125,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	eventType := r.Header.Get("X-GitHub-Event")
+	log.Printf("webhook: received %s event", eventType)
 	payload, err := webhook.Parse(r, h.cfg.GitHub.WebhookSecret)
 	if err != nil {
 		log.Printf("webhook parse error: %v", err)
@@ -134,6 +135,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// PR closed → clean up preview
 	if eventType == webhook.EventPullRequest && payload.Action == "closed" && payload.PullRequest != nil && payload.Repo != nil {
+		log.Printf("webhook: PR closed event for %s/#%d", payload.Repo.FullName, payload.PullRequest.Number)
 		repoName := payload.Repo.Name
 		prNum := payload.PullRequest.Number
 		previewDir := os.Getenv("OTTO_PREVIEW_DIR")
