@@ -237,45 +237,32 @@ if [ -n "$PR_URL" ]; then
                 --restart unless-stopped \
                 "${PREVIEW_IMAGE}" 2>&1
             
-            # Get the assigned host port
-            PORT=$(docker port "${PREVIEW_CONTAINER}" 3000 2>/dev/null | head -1 | cut -d: -f2 || echo "")
-            if [ -z "$PORT" ]; then
-                # Try 8080 if 3000 didn't work
-                PORT=$(docker port "${PREVIEW_CONTAINER}" 8080 2>/dev/null | head -1 | cut -d: -f2 || echo "")
-            fi
-            
-            if [ -n "$PORT" ]; then
-                # Store port mapping for Otto's proxy
-                mkdir -p /otto-preview
-                echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
-                echo "==> Preview running on port ${PORT}"
-                gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+            # Verify container is actually running
+            if [ "$(docker inspect -f '{{.State.Running}}' "${PREVIEW_CONTAINER}" 2>/dev/null)" = "true" ]; then
+                # Get the assigned host port
+                PORT=$(docker port "${PREVIEW_CONTAINER}" 3000 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                if [ -z "$PORT" ]; then
+                    PORT=$(docker port "${PREVIEW_CONTAINER}" 8080 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                fi
+                
+                if [ -n "$PORT" ]; then
+                    mkdir -p /otto-preview
+                    echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                    echo "==> Preview running on port ${PORT}"
+                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                else
+                    echo "==> WARNING: could not determine preview port"
+                    docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+                fi
             else
-                echo "==> WARNING: could not determine preview port"
+                echo "==> Container exited immediately (no start command), cleaning up..."
                 docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
             fi
         else
             echo "==> Nixpacks build failed (no start command), posting notice..."
             PREVIEW_BUILT=false
 
-            # Retry 1: Nixpacks with explicit static server
-            echo "==> Retrying Nixpacks with static server..."
-            if nixpacks build --start-cmd "npx serve dist" /workspace --name "${PREVIEW_IMAGE}" 2>&1; then
-                docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
-                docker run -d --name "${PREVIEW_CONTAINER}" -P "${PREVIEW_IMAGE}" 2>&1
-                PORT=$(docker port "${PREVIEW_CONTAINER}" 3000 2>/dev/null | head -1 | cut -d: -f2 || echo "")
-                if [ -n "$PORT" ]; then
-                    mkdir -p /otto-preview
-                    echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
-                    echo "==> Preview running on port ${PORT}"
-                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
-                    PREVIEW_BUILT=true
-                else
-                    docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
-                fi
-            fi
-
-            # Retry 2: nginx serving build output
+            # Retry 1: nginx serving build output
             if [ "$PREVIEW_BUILT" != true ]; then
                 echo "==> Trying static nginx preview..."
                 STATIC_DIR=""
@@ -315,7 +302,7 @@ DOCKERFILE
                 fi
             fi
 
-            # Retry 3: raw file copy
+            # Retry 2: raw file copy
             if [ "$PREVIEW_BUILT" != true ]; then
                 echo "==> Falling back to file copy..."
                 if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
