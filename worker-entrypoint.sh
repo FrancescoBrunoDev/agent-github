@@ -83,6 +83,7 @@ ${OTTO_FEEDBACK}
 
 ## Instructions
 
+0. **First**: if AGENTS.md doesn't exist at the repo root, create one (see new-issue instructions for format). Commit it separately.
 1. Read the feedback and full conversation carefully.
 2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` to ask.
 3. Implement the requested changes. Use \`agent-browser\` to test UI changes if applicable.
@@ -107,6 +108,14 @@ ${CONVERSATION}
 
 ## Instructions
 
+0. **First**: check if an AGENTS.md or AGENT.md file exists at the repo root. If not, create AGENTS.md documenting:
+   - Project overview and purpose
+   - Tech stack (languages, frameworks, build tools)
+   - Directory structure
+   - How to build, run, and test
+   - Key conventions and dependencies
+   Read package.json, config files, and source layout to gather this info. Keep it concise.
+   Commit this file before starting the fix: \`git add AGENTS.md && git commit -m "docs: add AGENTS.md"\`
 1. Understand the issue and all comments thoroughly.
 2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` to ask.
 3. Implement the fix. Use \`agent-browser\` to test UI changes if applicable.
