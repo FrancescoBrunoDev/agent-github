@@ -63,12 +63,11 @@ type RepoData struct {
 	Name string `json:"name"`
 }
 
-// IsMentioned returns whether @otto appears in any of the given text fields.
-var ottoMention = regexp.MustCompile(`(?i)@otto\b`)
-
-func IsMentioned(texts ...string) bool {
+// IsMentioned returns whether @<user> appears in any of the given text fields.
+func IsMentioned(user string, texts ...string) bool {
+	re := regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(user) + `\b`)
 	for _, t := range texts {
-		if ottoMention.MatchString(t) {
+		if re.MatchString(t) {
 			return true
 		}
 	}

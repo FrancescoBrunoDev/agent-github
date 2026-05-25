@@ -150,7 +150,11 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	assigned := botUser != "" && payload.IsAssignedTo(botUser)
 
 	if !assigned {
-		// Fallback: check for @otto mention (legacy trigger)
+		// Fallback: check for @mention of our bot user
+		mentionUser := botUser
+		if mentionUser == "" {
+			mentionUser = "otto"
+		}
 		var texts []string
 		if payload.Issue != nil && payload.Issue.Body != "" {
 			texts = append(texts, payload.Issue.Body)
@@ -159,9 +163,9 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			texts = append(texts, payload.Comment.Body)
 		}
 
-		if !webhook.IsMentioned(texts...) {
+		if !webhook.IsMentioned(mentionUser, texts...) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"skipped":"@otto not mentioned"}`))
+			w.Write([]byte(`{"skipped":"@` + mentionUser + ` not mentioned"}`))
 			return
 		}
 	}

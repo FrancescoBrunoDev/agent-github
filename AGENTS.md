@@ -3,7 +3,7 @@
 ## Project overview
 
 Otto is a **GitHub App** service that automatically solves GitHub issues via the
-[pi coding agent](https://github.com/earendil-works/pi). A user mentions `@otto`
+[pi coding agent](https://github.com/earendil-works/pi). A user mentions the configured bot user (e.g. `@otto-bot`, defaults to `@otto`)
 in an issue or PR comment, and Otto spawns an isolated Docker container that
 clones the repo, runs the pi agent with a local LLM, implements the fix, and
 opens a pull request — fully automated.
@@ -22,7 +22,7 @@ internal/
   github/client.go            # GitHub REST API client (JWT, installation tokens, comments, PRs)
   queue/queue.go              # FIFO in-memory job queue with configurable concurrency
   webhook/webhook.go          # Webhook payload parsing, HMAC-SHA256 signature verification,
-                              #   @otto mention regex matching
+                              #   @mention regex matching
   worker/worker.go            # Docker container spawn/cleanup, job lifecycle
 Dockerfile                    # Service image: builds Go binary on alpine, minimal runtime
 Dockerfile.worker             # Worker image: Ubuntu base with pi agent + tools
@@ -44,7 +44,7 @@ GitHub webhook (issue/comment)
         ▼
 otto serve (Go, :9423)
  ├── HMAC verification (X-Hub-Signature-256)
- ├── @otto mention detection (regex: (?i)@otto\b)
+ ├── @mention detection (regex built from configured bot user, default @otto)
  ├── Queue (FIFO, in-memory, max N concurrent)
  └── Worker manager
       │
@@ -63,7 +63,7 @@ docker run otto-worker:latest
 
 - **Identity**: GitHub App (JWT → installation token), NOT personal access tokens.
 - **Isolation**: One Docker container per job, destroyed when done.
-- **Trigger**: Explicit `@otto` mention only — never acts on its own.
+- **Trigger**: Assignment to the configured bot user, or @mention — never acts on its own.
 - **Continuation**: Commenting `@otto` on an existing Otto PR triggers
   continuation mode (checks out the PR branch, applies feedback).
 - **Deduplication**: If a job ID is already active, Otto posts an
@@ -217,7 +217,7 @@ All use `Accept: application/vnd.github+json` and authenticate via Bearer token.
 `internal/webhook/webhook.go`:
 - `Parse(r *http.Request, secret string)` — reads body, optionally verifies
   HMAC-SHA256 signature, unmarshals to `Payload`.
-- `IsMentioned(texts ...string)` — checks for `@otto` (case-insensitive,
+- `IsMentioned(user string, texts ...string)` — checks for `@<user>` (case-insensitive,
   word boundary) in any text.
 
 Events accepted: `issues`, `issue_comment`, `pull_request_review_comment`.
