@@ -15,9 +15,10 @@ type Config struct {
 	MediaDir    string `yaml:"media_dir"`
 	BaseURL     string `yaml:"base_url"`
 
-	GitHub GitHubConfig `yaml:"github"`
-	Queue  QueueConfig  `yaml:"queue"`
-	Pi     PiConfig     `yaml:"pi"`
+	GitHub GitHubConfig           `yaml:"github"`
+	Queue  QueueConfig            `yaml:"queue"`
+	Pi     PiConfig               `yaml:"pi"`
+	Repos  map[string]RepoConfig  `yaml:"repos"` // key = owner/repo
 }
 
 // GitHubConfig holds GitHub App credentials.
@@ -39,6 +40,14 @@ type PiConfig struct {
 	Settings *PiSettings `yaml:"settings"`
 	// Models becomes ~/.pi/agent/models.json (raw JSON)
 	Models string `yaml:"models"`
+}
+
+// RepoConfig holds per-repo settings that apply only when processing jobs
+// from a specific repository.
+type RepoConfig struct {
+	// Env defines extra environment variables injected into the worker
+	// container for this repo (e.g., API keys, feature flags).
+	Env map[string]string `yaml:"env"`
 }
 
 // PiSettings holds the most common pi agent settings.

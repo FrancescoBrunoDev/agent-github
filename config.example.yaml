@@ -32,3 +32,11 @@ pi:
   #       }
   #     }
   #   }
+
+# Per-repository configuration overrides.
+# Key = owner/repo (exact match against the webhook payload).
+repos:
+  # "owner/repo-name":
+  #   env:
+  #     MY_API_KEY: "..."
+  #     DEBUG: "true"
