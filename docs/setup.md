@@ -21,8 +21,10 @@
    | Metadata | Read-only | Always required |
 
 4. **Subscribe to events**:
+   - Issues
    - Issue comment
-   - (Pull request review comment — optional, for future PR review support)
+   - Pull request (for preview cleanup on PR close)
+   - Pull request review comment (optional, for future PR review support)
 
 5. **Where can this app be installed?**: Any account
 

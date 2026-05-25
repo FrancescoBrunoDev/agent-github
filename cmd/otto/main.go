@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/agent-github/otto/internal/config"
@@ -128,6 +129,25 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("webhook parse error: %v", err)
 		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	// PR closed → clean up preview
+	if eventType == webhook.EventPullRequest && payload.Action == "closed" && payload.PullRequest != nil && payload.Repo != nil {
+		repoName := payload.Repo.Name
+		prNum := payload.PullRequest.Number
+		previewDir := os.Getenv("OTTO_PREVIEW_DIR")
+		if previewDir == "" {
+			previewDir = os.TempDir() + "/otto-preview"
+		}
+		previewPath := filepath.Join(previewDir, repoName, fmt.Sprintf("%d", prNum))
+		if err := os.RemoveAll(previewPath); err != nil {
+			log.Printf("preview cleanup failed for %s/#%d: %v", repoName, prNum, err)
+		} else {
+			log.Printf("preview cleaned up: %s/#%d (%s)", repoName, prNum, previewPath)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"cleaned":"preview removed"}`))
 		return
 	}
 

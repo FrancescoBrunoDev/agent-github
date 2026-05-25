@@ -14,17 +14,19 @@ import (
 const (
 	EventIssue              = "issues"
 	EventIssueComment       = "issue_comment"
+	EventPullRequest        = "pull_request"
 	EventPullRequestReview  = "pull_request_review_comment"
 	SignatureHeader         = "X-Hub-Signature-256"
 )
 
 // Payload is a partial GitHub webhook payload — just what Otto needs.
 type Payload struct {
-	Action   string       `json:"action"`
-	Issue    *IssueData   `json:"issue,omitempty"`
-	Comment  *CommentData `json:"comment,omitempty"`
-	Repo     *RepoData    `json:"repository,omitempty"`
-	Assignee *AssigneeData `json:"assignee,omitempty"`
+	Action      string           `json:"action"`
+	Issue       *IssueData       `json:"issue,omitempty"`
+	Comment     *CommentData     `json:"comment,omitempty"`
+	Repo        *RepoData        `json:"repository,omitempty"`
+	Assignee    *AssigneeData    `json:"assignee,omitempty"`
+	PullRequest *PullRequestData `json:"pull_request,omitempty"`
 }
 
 type IssueData struct {
@@ -37,6 +39,11 @@ type IssueData struct {
 
 type AssigneeData struct {
 	Login string `json:"login"`
+}
+
+type PullRequestData struct {
+	Number int  `json:"number"`
+	Merged bool `json:"merged"`
 }
 
 func (i *IssueData) IsPullRequest() bool {
