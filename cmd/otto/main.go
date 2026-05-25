@@ -57,7 +57,13 @@ func serveCmd() *cobra.Command {
 				os.Setenv("OTTO_PI_MODELS", cfg.Pi.Models)
 			}
 			os.Setenv("OTTO_BASE_URL", cfg.BaseURL)
-		os.Setenv("OTTO_MEDIA_DIR", cfg.MediaDir)
+			os.Setenv("OTTO_MEDIA_DIR", cfg.MediaDir)
+			if cfg.GitHub.BotUser != "" {
+				os.Setenv("OTTO_BOT_USER", cfg.GitHub.BotUser)
+			}
+			if cfg.GitHub.BotToken != "" {
+				os.Setenv("OTTO_BOT_TOKEN", cfg.GitHub.BotToken)
+			}
 
 			var ghClient *github.Client
 			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.PrivateKeyFile != "" {

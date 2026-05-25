@@ -125,6 +125,8 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		"-e", "OTTO_FEEDBACK=" + job.Feedback,
 		"-e", "OTTO_BRANCH=" + job.Branch,
 		"-e", "OTTO_BASE_URL=" + os.Getenv("OTTO_BASE_URL"),
+		"-e", "OTTO_BOT_USER=" + envOrEmpty("OTTO_BOT_USER"),
+		"-e", "OTTO_BOT_TOKEN=" + envOrEmpty("OTTO_BOT_TOKEN"),
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
 		"-v", mediaDir + ":/otto-media",
 		"--network", "host",

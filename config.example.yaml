@@ -10,6 +10,11 @@ github:
   installation_id: 0
   private_key_file: "/etc/otto/github-app.pem"
   webhook_secret: ""
+  # Bot user for actions the GitHub App cannot perform (issue assignment, etc.)
+  # Create a machine user account (e.g. @otto-bot), add it as repo collaborator,
+  # and generate a classic PAT with repo scope.
+  # bot_user: "otto-bot"
+  # bot_token: "ghp_..."
 
 queue:
   type: memory

@@ -26,6 +26,11 @@ type GitHubConfig struct {
 	InstallationID int64  `yaml:"installation_id"`
 	PrivateKeyFile string `yaml:"private_key_file"`
 	WebhookSecret  string `yaml:"webhook_secret"`
+	// BotUser is the GitHub username of a machine/bot user that Otto impersonates
+	// for actions the App cannot perform (e.g., issue assignment).
+	BotUser string `yaml:"bot_user"`
+	// BotToken is a personal access token (PAT) for the bot user.
+	BotToken string `yaml:"bot_token"`
 }
 
 // QueueConfig holds queue settings.
