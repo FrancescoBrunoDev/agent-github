@@ -173,6 +173,9 @@ if [ -f .devcontainer/devcontainer.json ]; then
     echo "==> Environment ready (node $(node --version 2>/dev/null || echo '?'))"
 fi
 
+# ---- Snapshot existing workspace files (to only upload new screenshots) ----
+find /workspace -maxdepth 1 -type f > /tmp/files-before-pi.txt 2>/dev/null || true
+
 # ---- Invoke pi agent ----
 echo "==> Invoking pi agent..."
 pi --print @/tmp/prompt.md
@@ -187,11 +190,13 @@ fi
 echo "==> Checking for screenshots..."
 mkdir -p /tmp/otto-upload /otto-media
 
-# Copy screenshots with issue-number prefix for uniqueness
-find /workspace -maxdepth 1 \( -name "*.png" -o -name "*.jpg" -o -name "*.gif" -o -name "*.webp" \) 2>/dev/null | while read img; do
-    NEWNAME="issue-${ISSUE_NUMBER}-$(basename "${img}")"
-    cp "${img}" "/tmp/otto-upload/${NEWNAME}"
-    cp "${img}" "/otto-media/${NEWNAME}"
+# Only upload images created during this pi run (not stale repo files)
+find /workspace -maxdepth 1 \( -name "*.png" -o -name "*.jpg" -o -name "*.gif" -o -name "*.webp" \) -type f 2>/dev/null | while read img; do
+    if ! grep -qFx "$img" /tmp/files-before-pi.txt 2>/dev/null; then
+        NEWNAME="issue-${ISSUE_NUMBER}-$(basename "${img}")"
+        cp "${img}" "/tmp/otto-upload/${NEWNAME}"
+        cp "${img}" "/otto-media/${NEWNAME}"
+    fi
 done
 
 if [ "$(ls -A /tmp/otto-upload 2>/dev/null)" ]; then
