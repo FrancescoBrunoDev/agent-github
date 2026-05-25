@@ -30,6 +30,9 @@ type Job struct {
 	Branch string
 	// Feedback is the new comment text to feed to pi agent (continuation mode).
 	Feedback string
+	// EnvVars are extra environment variables injected into the worker container.
+	// Populated from config repos.<owner/repo>.env.
+	EnvVars map[string]string
 }
 
 // Status is the current state of a job.
@@ -129,6 +132,11 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		"-v", mediaDir + ":/otto-media",
 		"--network", "host",
 		workerImage,
+	}
+
+	// Inject per-repo environment variables
+	for k, v := range job.EnvVars {
+		args = append(args, "-e", k+"="+v)
 	}
 
 	cmd := exec.CommandContext(ctx, "docker", args...)

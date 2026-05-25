@@ -162,6 +162,11 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		IssueBody:  payload.Issue.Body,
 	}
 
+	// Inject per-repo environment variables from config
+	if repoCfg, ok := h.cfg.Repos[payload.Repo.FullName]; ok {
+		job.EnvVars = repoCfg.Env
+	}
+
 	if eventType == webhook.EventIssueComment || eventType == webhook.EventPullRequestReview {
 		if payload.Issue.IsPullRequest() {
 			job.Continue = true
