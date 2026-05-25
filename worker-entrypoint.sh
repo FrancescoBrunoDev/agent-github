@@ -187,8 +187,11 @@ fi
 echo "==> Checking for screenshots..."
 mkdir -p /tmp/otto-upload /otto-media
 
+# Copy screenshots with issue-number prefix for uniqueness
 find /workspace -maxdepth 1 \( -name "*.png" -o -name "*.jpg" -o -name "*.gif" -o -name "*.webp" \) 2>/dev/null | while read img; do
-    cp "${img}" "/tmp/otto-upload/$(basename "${img}")"
+    NEWNAME="issue-${ISSUE_NUMBER}-$(basename "${img}")"
+    cp "${img}" "/tmp/otto-upload/${NEWNAME}"
+    cp "${img}" "/otto-media/${NEWNAME}"
 done
 
 if [ "$(ls -A /tmp/otto-upload 2>/dev/null)" ]; then

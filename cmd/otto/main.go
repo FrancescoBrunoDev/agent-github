@@ -147,7 +147,17 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			previewDir = os.TempDir() + "/otto-preview"
 		}
 
-		// Stop and remove Docker container
+		// Use Docker to clean up root-owned files
+		dockerCleanup := func(paths ...string) {
+			for _, p := range paths {
+				exec.Command("docker", "run", "--rm",
+					"-v", previewDir+":/preview",
+					"alpine", "rm", "-rf", "/preview/"+p,
+				).Run()
+			}
+		}
+
+		// Stop and remove preview container
 		containerName := fmt.Sprintf("otto-preview-%s-%d", strings.ToLower(repoName), prNum)
 		if out, err := exec.Command("docker", "rm", "-f", containerName).CombinedOutput(); err != nil {
 			log.Printf("preview container cleanup failed for %s: %v\n%s", containerName, err, string(out))
@@ -155,17 +165,10 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			log.Printf("preview container removed: %s", containerName)
 		}
 
-		// Remove port file
-		portFile := filepath.Join(previewDir, repoName+"-"+fmt.Sprintf("%d", prNum)+".port")
-		os.Remove(portFile)
-
-		// Remove static files (fallback)
-		previewPath := filepath.Join(previewDir, repoName, fmt.Sprintf("%d", prNum))
-		if err := os.RemoveAll(previewPath); err != nil {
-			log.Printf("preview static cleanup failed for %s/#%d: %v", repoName, prNum, err)
-		} else {
-			log.Printf("preview cleaned up: %s/#%d (%s)", repoName, prNum, previewPath)
-		}
+		// Remove port file + static files (all root-owned)
+		prStr := fmt.Sprintf("%d", prNum)
+		dockerCleanup(repoName+"-"+prStr+".port", repoName+"/"+prStr)
+		log.Printf("preview cleaned up: %s/#%d", repoName, prNum)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"cleaned":"preview removed"}`))
 		return
