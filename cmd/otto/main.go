@@ -57,7 +57,8 @@ func serveCmd() *cobra.Command {
 				os.Setenv("OTTO_PI_MODELS", cfg.Pi.Models)
 			}
 			os.Setenv("OTTO_BASE_URL", cfg.BaseURL)
-		os.Setenv("OTTO_MEDIA_DIR", cfg.MediaDir)
+			os.Setenv("OTTO_MEDIA_DIR", cfg.MediaDir)
+			os.Setenv("OTTO_PREVIEW_DIR", cfg.PreviewDir)
 
 			var ghClient *github.Client
 			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.PrivateKeyFile != "" {
@@ -80,6 +81,10 @@ func serveCmd() *cobra.Command {
 			// Serve uploaded media
 			os.MkdirAll(cfg.MediaDir, 0755)
 			mux.Handle("/media/", http.StripPrefix("/media/", http.FileServer(http.Dir(cfg.MediaDir))))
+
+			// Serve project previews
+			os.MkdirAll(cfg.PreviewDir, 0755)
+			mux.Handle("/preview/", http.StripPrefix("/preview/", http.FileServer(http.Dir(cfg.PreviewDir))))
 
 			srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux}
 
