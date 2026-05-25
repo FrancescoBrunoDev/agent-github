@@ -249,6 +249,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if eventType == webhook.EventIssueComment || eventType == webhook.EventPullRequestReview {
 		if payload.Issue.IsPullRequest() {
 			job.Continue = true
+		job.ID = job.ID + "-feedback"  // unique ID to avoid dedup with original issue job
 			if payload.Comment != nil {
 				job.Feedback = payload.Comment.Body
 			}
@@ -276,12 +277,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.queue.IsActive(job.ID) {
-		log.Printf("job %s already active", job.ID)
-		if h.ghClient != nil && job.Feedback != "" {
-			owner, repo := splitRepoName(payload.Repo.FullName)
-			go h.ghClient.PostComment(context.Background(), owner, repo, payload.Issue.Number,
-				"👋 I'm already working on this! I'll process your feedback after the current run finishes.")
-		}
+		log.Printf("job %s already active, skipping", job.ID)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"skipped":"already working on this"}`))
 		return
@@ -294,11 +290,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.ghClient != nil && pos > 1 {
-		owner, repo := splitRepoName(payload.Repo.FullName)
-		go h.ghClient.PostComment(context.Background(), owner, repo, payload.Issue.Number,
-			fmt.Sprintf("👋 I'm on it! You're #%d in the queue.", pos))
-	}
+	log.Printf("enqueued %s (position %d)", job.ID, pos)
 
 	w.WriteHeader(http.StatusAccepted)
 	resp := map[string]interface{}{"accepted": true, "job": job.ID}
