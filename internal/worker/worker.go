@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
@@ -172,9 +173,12 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 	return nil
 }
 
-// monitor waits for the container to exit, then updates status.
+// monitor streams container logs in real-time, waits for exit, then cleans up.
 func (m *Manager) monitor(name, containerID string) {
-	// Wait for container to exit (docker wait returns container exit code as its own exit code)
+	// Stream logs in real-time
+	go m.streamLogs(name, containerID)
+
+	// Wait for container to exit
 	cmd := exec.Command("docker", "wait", containerID)
 	waitOut, waitErr := cmd.Output()
 	exitCode := strings.TrimSpace(string(waitOut))
@@ -183,10 +187,6 @@ func (m *Manager) monitor(name, containerID string) {
 		exitCode = "1"
 	}
 	log.Printf("worker: %s exited with code %s", name, exitCode)
-
-	// Grab logs before removing
-	logCmd := exec.Command("docker", "logs", "--tail", "200", containerID)
-	logs, _ := logCmd.Output()
 
 	m.mu.Lock()
 	info, ok := m.active[name]
@@ -200,10 +200,28 @@ func (m *Manager) monitor(name, containerID string) {
 	}
 	m.mu.Unlock()
 
-	log.Printf("worker: %s LOGS:\n%s", name, logs)
-
-	// Clean up (no --rm, so we remove manually)
+	// Clean up
 	m.clientRemove(containerID)
+}
+
+// streamLogs follows container logs and prints them with a prefix.
+func (m *Manager) streamLogs(name, containerID string) {
+	cmd := exec.Command("docker", "logs", "-f", containerID)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		log.Printf("[%s] %s", name, scanner.Text())
+	}
+	// docker logs -f exits when container exits; ignore errors
+	cmd.Wait()
 }
 
 // Active returns the number of currently running workers.
