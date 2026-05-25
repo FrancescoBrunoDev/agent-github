@@ -83,8 +83,8 @@ ${OTTO_FEEDBACK}
 4. When done: commit with a descriptive message, push to \`${BRANCH}\`. Update the PR body:
    \`gh pr edit --body "## Changes made
 - ..."\`
-5. If you took screenshots with agent-browser, save them in /workspace/.
-6. Write a summary comment:
+6. If you took screenshots with agent-browser, save them in /workspace/.
+7. Write a summary comment:
    \`gh issue comment ${ISSUE_NUMBER} --body "✅ Done! Here's what I changed:\n- ..."\`
 PROMPT
 else
@@ -104,7 +104,8 @@ ${CONVERSATION}
 1. Understand the issue and all comments thoroughly.
 2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` to ask.
 3. Implement the fix. Use \`agent-browser\` to test UI changes if applicable.
-4. When done:
+4. If your fix produces static/build output (e.g., from npm run build), copy it to a preview/ directory in /workspace/.
+5. When done:
    - \`git checkout -b ${BRANCH}\`
    - \`git commit -am "fix: ${ISSUE_TITLE}"\`
    - \`git push origin ${BRANCH}\`
@@ -115,8 +116,8 @@ ${CONVERSATION}
 - ...
 
 Closes #${ISSUE_NUMBER}"\`
-5. If you took screenshots with agent-browser, save them in /workspace/.
-6. Write a summary comment:
+6. If you took screenshots with agent-browser, save them in /workspace/.
+7. Write a summary comment:
    \`gh issue comment ${ISSUE_NUMBER} --body "✅ Done! Here's what I did:\n- ..."\`
 PROMPT
 fi
@@ -183,4 +184,21 @@ if [ "$(ls -A /tmp/otto-upload 2>/dev/null)" ]; then
 fi
 
 rm -rf /tmp/otto-upload
+
+# ---- Deploy project preview (if available) ----
+echo "==> Checking for project preview..."
+if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
+    PR_URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
+    if [ -n "$PR_URL" ]; then
+        PR_NUMBER=$(echo "$PR_URL" | grep -oP '/pull/\K[0-9]+' || echo "")
+        if [ -n "$PR_NUMBER" ]; then
+            PREVIEW_PATH="/otto-preview/${REPO_NAME}/${PR_NUMBER}"
+            mkdir -p "$PREVIEW_PATH"
+            cp -r /workspace/preview/* "$PREVIEW_PATH/" 2>&1
+            echo "==> Preview deployed to ${PREVIEW_PATH}"
+            gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+        fi
+    fi
+fi
+
 echo "==> Worker done"

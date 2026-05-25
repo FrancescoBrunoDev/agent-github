@@ -106,12 +106,19 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 	//   -e GITHUB_TOKEN=... -e REPO_URL=... -e ISSUE_NUMBER=... \
 	//   -e ISSUE_TITLE=... -e ISSUE_BODY=... -e LLM_API_KEY=... \
 	//   -v /var/run/docker.sock:/var/run/docker.sock \
+	//   -v <mediaDir>:/otto-media -v <previewDir>:/otto-preview \
 	//   otto-worker:latest
 	mediaDir := os.Getenv("OTTO_MEDIA_DIR")
 	if mediaDir == "" {
 		mediaDir = os.TempDir() + "/otto-media"
 	}
 	os.MkdirAll(mediaDir, 0755)
+
+	previewDir := os.Getenv("OTTO_PREVIEW_DIR")
+	if previewDir == "" {
+		previewDir = os.TempDir() + "/otto-preview"
+	}
+	os.MkdirAll(previewDir, 0755)
 
 	args := []string{
 		"run",
@@ -130,6 +137,7 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		"-e", "OTTO_BASE_URL=" + os.Getenv("OTTO_BASE_URL"),
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
 		"-v", mediaDir + ":/otto-media",
+		"-v", previewDir + ":/otto-preview",
 		"--network", "host",
 		workerImage,
 	}

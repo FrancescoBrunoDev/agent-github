@@ -13,6 +13,7 @@ type Config struct {
 	WebhookPath string `yaml:"webhook_path"`
 	MaxWorkers  int    `yaml:"max_workers"`
 	MediaDir    string `yaml:"media_dir"`
+	PreviewDir  string `yaml:"preview_dir"`
 	BaseURL     string `yaml:"base_url"`
 
 	GitHub GitHubConfig           `yaml:"github"`
@@ -75,6 +76,7 @@ func Defaults() Config {
 		WebhookPath: "/webhook",
 		MaxWorkers:  5,
 		MediaDir:    "./media",
+		PreviewDir:  "./preview",
 		BaseURL:     "http://localhost:9423",
 		Queue: QueueConfig{
 			Type: "memory",

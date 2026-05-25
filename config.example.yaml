@@ -3,6 +3,7 @@ listen_addr: ":9423"
 webhook_path: "/webhook"
 max_workers: 5
 media_dir: "./media"
+preview_dir: "./preview"
 base_url: "https://otto.francesco-bruno.com"
 
 github:
