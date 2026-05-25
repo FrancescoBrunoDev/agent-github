@@ -122,6 +122,7 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 
 	args := []string{
 		"run",
+		"-d",
 		"--name", containerName,
 		"-e", "GITHUB_TOKEN=" + job.GitHubToken,
 		"-e", "REPO_URL=" + job.RepoURL,
