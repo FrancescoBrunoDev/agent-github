@@ -255,52 +255,80 @@ if [ -n "$PR_URL" ]; then
                 docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
             fi
         else
-            echo "==> Nixpacks build failed, trying static nginx preview..."
-
-            # Find build output directory (dist, build, out, public)
-            STATIC_DIR=""
-            for dir in dist build out public; do
-                if [ -d "/workspace/$dir" ] && [ "$(ls -A /workspace/$dir 2>/dev/null)" ]; then
-                    STATIC_DIR="$dir"
-                    break
-                fi
-            done
-
+            echo "==> Nixpacks build failed (no start command), posting notice..."
             PREVIEW_BUILT=false
-            if [ -n "$STATIC_DIR" ]; then
-                echo "==> Found build output: /workspace/$STATIC_DIR"
-                cat > /workspace/Dockerfile.otto <<DOCKERFILE
+
+            # Retry 1: Nixpacks with explicit static server
+            echo "==> Retrying Nixpacks with static server..."
+            if nixpacks build --start-cmd "npx serve dist" /workspace --name "${PREVIEW_IMAGE}" 2>&1; then
+                docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+                docker run -d --name "${PREVIEW_CONTAINER}" -P "${PREVIEW_IMAGE}" 2>&1
+                PORT=$(docker port "${PREVIEW_CONTAINER}" 3000 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                if [ -n "$PORT" ]; then
+                    mkdir -p /otto-preview
+                    echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                    echo "==> Preview running on port ${PORT}"
+                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    PREVIEW_BUILT=true
+                else
+                    docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+                fi
+            fi
+
+            # Retry 2: nginx serving build output
+            if [ "$PREVIEW_BUILT" != true ]; then
+                echo "==> Trying static nginx preview..."
+                STATIC_DIR=""
+                for dir in dist build out public; do
+                    if [ -d "/workspace/$dir" ] && [ "$(ls -A /workspace/$dir 2>/dev/null)" ]; then
+                        STATIC_DIR="$dir"
+                        break
+                    fi
+                done
+
+                if [ -n "$STATIC_DIR" ]; then
+                    echo "==> Found build output: /workspace/$STATIC_DIR"
+                    cat > /workspace/Dockerfile.otto <<DOCKERFILE
 FROM nginx:alpine
 COPY $STATIC_DIR /usr/share/nginx/html
 DOCKERFILE
-                echo "==> Building static preview from /workspace/$STATIC_DIR..."
-                BUILD_OUT=$(docker build -t "${PREVIEW_IMAGE}" -f /workspace/Dockerfile.otto /workspace 2>&1)
-                BUILD_EXIT=$?
-                echo "$BUILD_OUT"
-                if [ $BUILD_EXIT -eq 0 ]; then
-                    docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
-                    docker run -d --name "${PREVIEW_CONTAINER}" -P "${PREVIEW_IMAGE}" 2>&1
-                    PORT=$(docker port "${PREVIEW_CONTAINER}" 80 2>/dev/null | head -1 | cut -d: -f2 || echo "")
-                    if [ -n "$PORT" ]; then
-                        mkdir -p /otto-preview
-                        echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
-                        echo "==> Static preview running on port ${PORT}"
-                        gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
-                        PREVIEW_BUILT=true
+                    echo "==> Building static preview from /workspace/$STATIC_DIR..."
+                    BUILD_OUT=$(docker build -t "${PREVIEW_IMAGE}" -f /workspace/Dockerfile.otto /workspace 2>&1)
+                    BUILD_EXIT=$?
+                    echo "$BUILD_OUT"
+                    if [ $BUILD_EXIT -eq 0 ]; then
+                        docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+                        docker run -d --name "${PREVIEW_CONTAINER}" -P "${PREVIEW_IMAGE}" 2>&1
+                        PORT=$(docker port "${PREVIEW_CONTAINER}" 80 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                        if [ -n "$PORT" ]; then
+                            mkdir -p /otto-preview
+                            echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                            echo "==> Static preview running on port ${PORT}"
+                            gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                            PREVIEW_BUILT=true
+                        else
+                            docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+                        fi
                     fi
+                else
+                    echo "==> No build output directory found (tried: dist build out public)"
                 fi
-            else
-                echo "==> No build output directory found (tried: dist build out public)"
             fi
 
-            # Last resort: copy static files to preview dir
+            # Retry 3: raw file copy
             if [ "$PREVIEW_BUILT" != true ]; then
-                echo "==> Static build failed, falling back to file copy..."
+                echo "==> Falling back to file copy..."
                 if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
                     mkdir -p "/otto-preview/${REPO_NAME}/${PR_NUMBER}"
                     cp -r /workspace/preview/* "/otto-preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1
                     gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    PREVIEW_BUILT=true
                 fi
+            fi
+
+            # All retries failed
+            if [ "$PREVIEW_BUILT" != true ]; then
+                gh issue comment "${ISSUE_NUMBER}" --body "❌ No preview available — add a \`start\` script to package.json (e.g. \`\"start\": \"npx serve dist\"\`) to enable containerized previews." 2>&1 || true
             fi
         fi
     fi
