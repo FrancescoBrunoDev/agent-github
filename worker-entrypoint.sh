@@ -264,12 +264,12 @@ if [ -n "$PR_URL" ]; then
             PREVIEW_BUILT=false
             if [ -n "$STATIC_DIR" ]; then
                 echo "==> Found build output: /workspace/$STATIC_DIR"
-                cat > /tmp/Dockerfile.preview <<DOCKERFILE
+                cat > /workspace/Dockerfile.otto <<DOCKERFILE
 FROM nginx:alpine
 COPY $STATIC_DIR /usr/share/nginx/html
 DOCKERFILE
                 echo "==> Building static preview from /workspace/$STATIC_DIR..."
-                BUILD_OUT=$(docker build -t "${PREVIEW_IMAGE}" -f /tmp/Dockerfile.preview /workspace 2>&1)
+                BUILD_OUT=$(docker build -t "${PREVIEW_IMAGE}" -f /workspace/Dockerfile.otto /workspace 2>&1)
                 BUILD_EXIT=$?
                 echo "$BUILD_OUT"
                 if [ $BUILD_EXIT -eq 0 ]; then
