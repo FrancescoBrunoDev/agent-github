@@ -239,11 +239,16 @@ if [ -n "$PR_URL" ]; then
             
             # Verify container is actually running
             if [ "$(docker inspect -f '{{.State.Running}}' "${PREVIEW_CONTAINER}" 2>/dev/null)" = "true" ]; then
-                # Get the assigned host port
-                PORT=$(docker port "${PREVIEW_CONTAINER}" 3000 2>/dev/null | head -1 | cut -d: -f2 || echo "")
-                if [ -z "$PORT" ]; then
-                    PORT=$(docker port "${PREVIEW_CONTAINER}" 8080 2>/dev/null | head -1 | cut -d: -f2 || echo "")
-                fi
+                # Wait for the server to bind (npx may download serve first)
+                PORT=""
+                for i in $(seq 1 10); do
+                    PORT=$(docker port "${PREVIEW_CONTAINER}" 3000 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                    if [ -z "$PORT" ]; then
+                        PORT=$(docker port "${PREVIEW_CONTAINER}" 8080 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                    fi
+                    [ -n "$PORT" ] && break
+                    sleep 1
+                done
                 
                 if [ -n "$PORT" ]; then
                     mkdir -p /otto-preview
@@ -286,7 +291,12 @@ DOCKERFILE
                     if [ $BUILD_EXIT -eq 0 ]; then
                         docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
                         docker run -d --name "${PREVIEW_CONTAINER}" -P "${PREVIEW_IMAGE}" 2>&1
-                        PORT=$(docker port "${PREVIEW_CONTAINER}" 80 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                        PORT=""
+                        for i in $(seq 1 5); do
+                            PORT=$(docker port "${PREVIEW_CONTAINER}" 80 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                            [ -n "$PORT" ] && break
+                            sleep 1
+                        done
                         if [ -n "$PORT" ]; then
                             mkdir -p /otto-preview
                             echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
