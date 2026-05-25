@@ -389,12 +389,19 @@ func reconcilePreviews(previewDir string) {
 func previewHandler(previewDir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Parse /preview/{repo}/{pr}/...
-		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/preview/"), "/", 3)
+		path := strings.TrimPrefix(r.URL.Path, "/preview/")
+		parts := strings.SplitN(path, "/", 3)
 		if len(parts) < 2 {
 			http.NotFound(w, r)
 			return
 		}
 		repo, pr := parts[0], parts[1]
+
+		// Redirect /preview/{repo}/{pr} → /preview/{repo}/{pr}/ (relative links fix)
+		if len(parts) == 2 && !strings.HasSuffix(r.URL.Path, "/") {
+			http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+			return
+		}
 
 		// Check for containerized preview
 		portFile := filepath.Join(previewDir, repo+"-"+pr+".port")
