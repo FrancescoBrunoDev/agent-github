@@ -4,17 +4,17 @@ Otto is a GitHub App service that automatically solves GitHub issues by
 spawning isolated Docker containers running the [pi coding
 agent](https://github.com/earendil-works/pi) with a local LLM.
 
-**Trigger:** mention `@otto` in an issue or PR comment. Otto responds by
-creating a branch, implementing the fix, opening a pull request, and
-reporting back — fully automated.
+**Trigger:** assign an issue to the bot user (e.g. `@otto-bot`) and Otto
+picks it up automatically. You can also mention `@otto` in a comment for
+legacy support or continuation mode.
 
 ## How it works
 
 ```
-Issue comment "@otto fix this"
+Assign issue to @otto-bot
          │
          ▼
-   GitHub webhook
+   GitHub webhook (issues: assigned)
          │
          ▼
    Otto service (Go)
@@ -33,7 +33,8 @@ Issue comment "@otto fix this"
 
 ## Features
 
-- **On-demand**: only acts when explicitly mentioned (`@otto`)
+- **Assignment-driven**: assign an issue to the bot user and Otto starts working
+- **Mention fallback**: `@otto` in comments still works for legacy and PR feedback
 - **Isolated**: each job runs in its own Docker container
 - **Local LLM**: no cloud API keys needed (uses llamacpp)
 - **Devcontainer-aware**: reads `.devcontainer/devcontainer.json` for tool versions

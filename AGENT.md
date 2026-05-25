@@ -62,8 +62,13 @@ docker run otto-worker:latest
 ### Critical design decisions
 
 - **Identity**: GitHub App (JWT → installation token), NOT personal access tokens.
+  A separate machine user (bot_user) can be configured for actions the App can't
+  perform (issue assignment, user-scoped triggers).
 - **Isolation**: One Docker container per job, destroyed when done.
-- **Trigger**: Explicit `@otto` mention only — never acts on its own.
+- **Trigger (primary)**: Assign an issue to the bot user → webhook `issues: assigned`
+  → Otto picks it up automatically. No text matching needed.
+- **Trigger (legacy)**: Explicit `@otto` mention in issue/PR comments still works,
+  and is the primary mechanism for continuation mode on existing PRs.
 - **Continuation**: Commenting `@otto` on an existing Otto PR triggers
   continuation mode (checks out the PR branch, applies feedback).
 - **Deduplication**: If a job ID is already active, Otto posts an
@@ -130,9 +135,13 @@ Pi settings and models are written to `~/.pi/agent/settings.json` and
    | `pull_request_review_comment`.
 2. `webhook.Parse()` reads body, verifies HMAC signature (if secret configured),
    unmarshals into `Payload`.
-3. Handler checks `action` ∈ `{opened, edited, created}`, then calls
-   `webhook.IsMentioned()` on issue body + comment body.
-4. If `@otto` found → build a `worker.Job` struct. If the event is a comment on
+3. Handler checks `action` ∈ `{opened, edited, created, assigned}`.
+   - **Assignment trigger (primary):** if `action=assigned` and the assignee
+     matches the configured `bot_user`, build a job immediately — no text
+     matching needed.
+   - **Mention trigger (legacy):** otherwise, call `webhook.IsMentioned()` on
+     the issue body + comment body looking for `@otto`.
+4. If triggered → build a `worker.Job` struct. If the event is a comment on
    an existing PR (detected via `payload.Issue.IsPullRequest()`), set
    `Job.Continue = true`, fetch the PR head branch via `ghClient.GetPRHead()`,
    and store the comment text in `Job.Feedback`.
@@ -219,9 +228,11 @@ All use `Accept: application/vnd.github+json` and authenticate via Bearer token.
   HMAC-SHA256 signature, unmarshals to `Payload`.
 - `IsMentioned(texts ...string)` — checks for `@otto` (case-insensitive,
   word boundary) in any text.
+- `IsAssignedTo(user string)` — checks if the event is an assignment to a
+  specific user (used for the primary trigger mechanism).
 
 Events accepted: `issues`, `issue_comment`, `pull_request_review_comment`.
-Actions accepted: `opened`, `edited`, `created`.
+Actions accepted: `opened`, `edited`, `created`, `assigned`.
 
 ## Coding conventions
 
