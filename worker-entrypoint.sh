@@ -205,18 +205,55 @@ fi
 
 rm -rf /tmp/otto-upload
 
-# ---- Deploy project preview (if available) ----
-echo "==> Checking for project preview..."
-if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
-    PR_URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
-    if [ -n "$PR_URL" ]; then
-        PR_NUMBER=$(echo "$PR_URL" | grep -oP '/pull/\K[0-9]+' || echo "")
-        if [ -n "$PR_NUMBER" ]; then
-            PREVIEW_PATH="/otto-preview/${REPO_NAME}/${PR_NUMBER}"
-            mkdir -p "$PREVIEW_PATH"
-            cp -r /workspace/preview/* "$PREVIEW_PATH/" 2>&1
-            echo "==> Preview deployed to ${PREVIEW_PATH}"
-            gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+# ---- Deploy containerized preview via Nixpacks ----
+echo "==> Building containerized preview..."
+
+# Clean up any previous preview container for this PR
+PREVIEW_CONTAINER="otto-preview-${REPO_NAME}"
+docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+
+PR_URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
+if [ -n "$PR_URL" ]; then
+    PR_NUMBER=$(echo "$PR_URL" | grep -oP '/pull/\K[0-9]+' || echo "")
+    if [ -n "$PR_NUMBER" ]; then
+        PREVIEW_IMAGE="otto-preview-${REPO_NAME,,}-${PR_NUMBER}"
+        PREVIEW_CONTAINER="${PREVIEW_IMAGE}"
+
+        # Build image with Nixpacks
+        echo "==> Nixpacks building ${PREVIEW_IMAGE}..."
+        if nixpacks build /workspace --name "${PREVIEW_IMAGE}" 2>&1; then
+            # Stop old container, run new one on random port
+            docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+            docker run -d --name "${PREVIEW_CONTAINER}" \
+                -P \
+                --restart unless-stopped \
+                "${PREVIEW_IMAGE}" 2>&1
+            
+            # Get the assigned host port
+            PORT=$(docker port "${PREVIEW_CONTAINER}" 3000 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+            if [ -z "$PORT" ]; then
+                # Try 8080 if 3000 didn't work
+                PORT=$(docker port "${PREVIEW_CONTAINER}" 8080 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+            fi
+            
+            if [ -n "$PORT" ]; then
+                # Store port mapping for Otto's proxy
+                mkdir -p /otto-preview
+                echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                echo "==> Preview running on port ${PORT}"
+                gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+            else
+                echo "==> WARNING: could not determine preview port"
+                docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+            fi
+        else
+            echo "==> WARNING: Nixpacks build failed, trying static preview fallback..."
+            # Fallback: copy static files if any
+            if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
+                mkdir -p "/otto-preview/${REPO_NAME}/${PR_NUMBER}"
+                cp -r /workspace/preview/* "/otto-preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1
+                gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+            fi
         fi
     fi
 fi

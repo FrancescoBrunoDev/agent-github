@@ -27,6 +27,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 # pi agent
 RUN npm install -g @earendil-works/pi-coding-agent
 
+# Nixpacks for containerized previews
+RUN curl -fsSL https://nixpacks.com/install.sh | bash && nixpacks --version
+
 # agent-browser
 RUN npm install -g agent-browser && agent-browser install
 

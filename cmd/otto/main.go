@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/agent-github/otto/internal/config"
@@ -89,9 +93,9 @@ func serveCmd() *cobra.Command {
 			os.MkdirAll(cfg.MediaDir, 0755)
 			mux.Handle("/media/", http.StripPrefix("/media/", http.FileServer(http.Dir(cfg.MediaDir))))
 
-			// Serve project previews
+			// Serve project previews (containerized or static fallback)
 			os.MkdirAll(cfg.PreviewDir, 0755)
-			mux.Handle("/preview/", http.StripPrefix("/preview/", http.FileServer(http.Dir(cfg.PreviewDir))))
+			mux.Handle("/preview/", previewHandler(cfg.PreviewDir))
 
 			srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux}
 
@@ -142,9 +146,23 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		if previewDir == "" {
 			previewDir = os.TempDir() + "/otto-preview"
 		}
+
+		// Stop and remove Docker container
+		containerName := fmt.Sprintf("otto-preview-%s-%d", strings.ToLower(repoName), prNum)
+		if out, err := exec.Command("docker", "rm", "-f", containerName).CombinedOutput(); err != nil {
+			log.Printf("preview container cleanup failed for %s: %v\n%s", containerName, err, string(out))
+		} else {
+			log.Printf("preview container removed: %s", containerName)
+		}
+
+		// Remove port file
+		portFile := filepath.Join(previewDir, repoName+"-"+fmt.Sprintf("%d", prNum)+".port")
+		os.Remove(portFile)
+
+		// Remove static files (fallback)
 		previewPath := filepath.Join(previewDir, repoName, fmt.Sprintf("%d", prNum))
 		if err := os.RemoveAll(previewPath); err != nil {
-			log.Printf("preview cleanup failed for %s/#%d: %v", repoName, prNum, err)
+			log.Printf("preview static cleanup failed for %s/#%d: %v", repoName, prNum, err)
 		} else {
 			log.Printf("preview cleaned up: %s/#%d (%s)", repoName, prNum, previewPath)
 		}
@@ -278,6 +296,37 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		resp["queue_position"] = pos
 	}
 	json.NewEncoder(w).Encode(resp)
+}
+
+
+// previewHandler serves containerized previews via reverse proxy,
+// falling back to static files if no container is running.
+func previewHandler(previewDir string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Parse /preview/{repo}/{pr}/...
+		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/preview/"), "/", 3)
+		if len(parts) < 2 {
+			http.NotFound(w, r)
+			return
+		}
+		repo, pr := parts[0], parts[1]
+
+		// Check for containerized preview
+		portFile := filepath.Join(previewDir, repo+"-"+pr+".port")
+		portBytes, err := os.ReadFile(portFile)
+		if err == nil {
+			port := strings.TrimSpace(string(portBytes))
+			target, _ := url.Parse("http://localhost:" + port)
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			r.URL.Path = "/" + strings.Join(parts[2:], "/")
+			proxy.ServeHTTP(w, r)
+			return
+		}
+
+		// Fallback: static files
+		staticDir := filepath.Join(previewDir, repo, pr)
+		http.StripPrefix("/preview/"+repo+"/"+pr, http.FileServer(http.Dir(staticDir))).ServeHTTP(w, r)
+	})
 }
 
 func isActionRelevant(action string) bool {
