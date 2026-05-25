@@ -333,16 +333,10 @@ DOCKERFILE
                 gh issue comment "${ISSUE_NUMBER}" --body "❌ No preview available — add a \`start\` script to package.json (e.g. \`\"start\": \"npx serve dist\"\`) to enable containerized previews." 2>&1 || true
             fi
 
-            # Update PR description with preview link
+            # Comment preview link on the PR
             PREVIEW_LINK="${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/"
             if [ "$PREVIEW_BUILT" = true ]; then
-                CURRENT_BODY=$(gh pr view "${PR_NUMBER}" --json body --jq '.body' 2>/dev/null || echo "")
-                if ! echo "$CURRENT_BODY" | grep -q "$PREVIEW_LINK"; then
-                    gh pr edit "${PR_NUMBER}" --body "${CURRENT_BODY}
-
----
-🌐 **Preview:** ${PREVIEW_LINK}" 2>&1 || true
-                fi
+                gh pr comment "${PR_NUMBER}" --body "🌐 **Preview:** ${PREVIEW_LINK}" 2>&1 || true
             fi
         fi
     fi
