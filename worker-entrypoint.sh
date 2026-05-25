@@ -260,12 +260,16 @@ if [ -n "$PR_URL" ]; then
 
             PREVIEW_BUILT=false
             if [ -n "$STATIC_DIR" ]; then
+                echo "==> Found build output: /workspace/$STATIC_DIR"
                 cat > /tmp/Dockerfile.preview <<DOCKERFILE
 FROM nginx:alpine
 COPY $STATIC_DIR /usr/share/nginx/html
 DOCKERFILE
                 echo "==> Building static preview from /workspace/$STATIC_DIR..."
-                if docker build -t "${PREVIEW_IMAGE}" -f /tmp/Dockerfile.preview /workspace 2>&1; then
+                BUILD_OUT=$(docker build -t "${PREVIEW_IMAGE}" -f /tmp/Dockerfile.preview /workspace 2>&1)
+                BUILD_EXIT=$?
+                echo "$BUILD_OUT"
+                if [ $BUILD_EXIT -eq 0 ]; then
                     docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
                     docker run -d --name "${PREVIEW_CONTAINER}" -P "${PREVIEW_IMAGE}" 2>&1
                     PORT=$(docker port "${PREVIEW_CONTAINER}" 80 2>/dev/null | head -1 | cut -d: -f2 || echo "")
@@ -277,6 +281,8 @@ DOCKERFILE
                         PREVIEW_BUILT=true
                     fi
                 fi
+            else
+                echo "==> No build output directory found (tried: dist build out public)"
             fi
 
             # Last resort: copy static files to preview dir
