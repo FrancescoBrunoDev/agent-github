@@ -52,6 +52,12 @@ WORKING_COMMENT_URL=$(gh issue comment "${ISSUE_NUMBER}" --body "🔧 I'm workin
 echo "Working comment: ${WORKING_COMMENT_URL}"
 WORKING_COMMENT_ID=$(echo "${WORKING_COMMENT_URL}" | grep -oP 'issuecomment-\K[0-9]+' || echo "")
 
+# ---- Self-assign issue (if bot user configured) ----
+if [ -n "${OTTO_BOT_USER:-}" ] && [ -n "${OTTO_BOT_TOKEN:-}" ]; then
+    echo "==> Self-assigning issue to ${OTTO_BOT_USER}..."
+    GH_TOKEN="${OTTO_BOT_TOKEN}" gh issue edit "${ISSUE_NUMBER}" --add-assignee "${OTTO_BOT_USER}" 2>&1 || true
+fi
+
 # ---- Branch / prompt logic ----
 if [ "${OTTO_CONTINUE:-false}" = "true" ]; then
     echo "==> CONTINUATION mode — checking out ${BRANCH}"
