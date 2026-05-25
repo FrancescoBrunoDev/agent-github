@@ -247,12 +247,46 @@ if [ -n "$PR_URL" ]; then
                 docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
             fi
         else
-            echo "==> WARNING: Nixpacks build failed, trying static preview fallback..."
-            # Fallback: copy static files if any
-            if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
-                mkdir -p "/otto-preview/${REPO_NAME}/${PR_NUMBER}"
-                cp -r /workspace/preview/* "/otto-preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1
-                gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+            echo "==> Nixpacks build failed, trying static nginx preview..."
+
+            # Find build output directory (dist, build, out, public)
+            STATIC_DIR=""
+            for dir in dist build out public; do
+                if [ -d "/workspace/$dir" ] && [ "$(ls -A /workspace/$dir 2>/dev/null)" ]; then
+                    STATIC_DIR="$dir"
+                    break
+                fi
+            done
+
+            PREVIEW_BUILT=false
+            if [ -n "$STATIC_DIR" ]; then
+                cat > /tmp/Dockerfile.preview <<DOCKERFILE
+FROM nginx:alpine
+COPY $STATIC_DIR /usr/share/nginx/html
+DOCKERFILE
+                echo "==> Building static preview from /workspace/$STATIC_DIR..."
+                if docker build -t "${PREVIEW_IMAGE}" -f /tmp/Dockerfile.preview /workspace 2>&1; then
+                    docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
+                    docker run -d --name "${PREVIEW_CONTAINER}" -P "${PREVIEW_IMAGE}" 2>&1
+                    PORT=$(docker port "${PREVIEW_CONTAINER}" 80 2>/dev/null | head -1 | cut -d: -f2 || echo "")
+                    if [ -n "$PORT" ]; then
+                        mkdir -p /otto-preview
+                        echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                        echo "==> Static preview running on port ${PORT}"
+                        gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                        PREVIEW_BUILT=true
+                    fi
+                fi
+            fi
+
+            # Last resort: copy static files to preview dir
+            if [ "$PREVIEW_BUILT" != true ]; then
+                echo "==> Static build failed, falling back to file copy..."
+                if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
+                    mkdir -p "/otto-preview/${REPO_NAME}/${PR_NUMBER}"
+                    cp -r /workspace/preview/* "/otto-preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1
+                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                fi
             fi
         fi
     fi
