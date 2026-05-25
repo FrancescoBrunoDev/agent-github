@@ -61,6 +61,9 @@ func serveCmd() *cobra.Command {
 			}
 			if cfg.Pi.Models != "" {
 				os.Setenv("OTTO_PI_MODELS", cfg.Pi.Models)
+			if cfg.Pi.Auth != "" {
+				os.Setenv("OTTO_PI_AUTH", cfg.Pi.Auth)
+			}
 			}
 			os.Setenv("OTTO_BASE_URL", cfg.BaseURL)
 			os.Setenv("OTTO_MEDIA_DIR", cfg.MediaDir)

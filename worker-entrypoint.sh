@@ -20,6 +20,11 @@ if [ -n "${OTTO_PI_MODELS:-}" ] && [ "${OTTO_PI_MODELS}" != "{}" ]; then
     echo "==> Pi models written"
 fi
 
+if [ -n "${OTTO_PI_AUTH:-}" ] && [ "${OTTO_PI_AUTH}" != "{}" ]; then
+    echo "${OTTO_PI_AUTH}" > ~/.pi/agent/auth.json
+    echo "==> Pi auth written"
+fi
+
 # Auth: use bot token for gh CLI (comments, PRs) if available, else installation token
 if [ -n "${OTTO_BOT_TOKEN:-}" ]; then
     export GH_TOKEN="${OTTO_BOT_TOKEN}"

@@ -46,6 +46,8 @@ type PiConfig struct {
 	Settings *PiSettings `yaml:"settings"`
 	// Models becomes ~/.pi/agent/models.json (raw JSON)
 	Models string `yaml:"models"`
+	// Auth becomes ~/.pi/agent/auth.json (raw JSON)
+	Auth string `yaml:"auth"`
 }
 
 // RepoConfig holds per-repo settings that apply only when processing jobs

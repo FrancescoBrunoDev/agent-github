@@ -133,6 +133,7 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		"-e", "LLM_API_KEY=" + envOrEmpty("LLM_API_KEY"),
 		"-e", "OTTO_PI_SETTINGS=" + piSettings,
 		"-e", "OTTO_PI_MODELS=" + piModels,
+		"-e", "OTTO_PI_AUTH=" + envOrEmpty("OTTO_PI_AUTH"),
 		"-e", fmt.Sprintf("OTTO_CONTINUE=%v", job.Continue),
 		"-e", "OTTO_FEEDBACK=" + job.Feedback,
 		"-e", "OTTO_BRANCH=" + job.Branch,

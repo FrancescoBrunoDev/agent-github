@@ -26,16 +26,12 @@ pi:
     default_model: claude-sonnet-4-20250514
     default_thinking_level: medium
   # models: |
+  #   { ... }
+  # auth: |
   #   {
-  #     "providers": {
-  #       "ollama": {
-  #         "baseUrl": "http://localhost:11434/v1",
-  #         "api": "openai-completions",
-  #         "apiKey": "ollama",
-  #         "models": [
-  #           { "id": "llama3.1:8b" }
-  #         ]
-  #       }
+  #     "provider-name": {
+  #       "type": "api_key",
+  #       "key": "sk-..."
   #     }
   #   }
 
