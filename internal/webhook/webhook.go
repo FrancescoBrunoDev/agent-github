@@ -20,22 +20,34 @@ const (
 
 // Payload is a partial GitHub webhook payload — just what Otto needs.
 type Payload struct {
-	Action  string      `json:"action"`
-	Issue   *IssueData  `json:"issue,omitempty"`
-	Comment *CommentData `json:"comment,omitempty"`
-	Repo    *RepoData   `json:"repository,omitempty"`
+	Action   string       `json:"action"`
+	Issue    *IssueData   `json:"issue,omitempty"`
+	Comment  *CommentData `json:"comment,omitempty"`
+	Repo     *RepoData    `json:"repository,omitempty"`
+	Assignee *AssigneeData `json:"assignee,omitempty"`
 }
 
 type IssueData struct {
-	Number      int         `json:"number"`
-	Title       string      `json:"title"`
-	Body        string      `json:"body"`
-	URL         string      `json:"html_url"`
-	PullRequest *struct{}   `json:"pull_request,omitempty"` // present if this is a PR
+	Number      int       `json:"number"`
+	Title       string    `json:"title"`
+	Body        string    `json:"body"`
+	URL         string    `json:"html_url"`
+	PullRequest *struct{} `json:"pull_request,omitempty"` // present if this is a PR
+}
+
+type AssigneeData struct {
+	Login string `json:"login"`
 }
 
 func (i *IssueData) IsPullRequest() bool {
 	return i != nil && i.PullRequest != nil
+}
+
+// IsAssignedTo returns true if the webhook payload is an assignment
+// event targeting the given GitHub username.
+func (p *Payload) IsAssignedTo(user string) bool {
+	return p.Action == "assigned" && p.Assignee != nil &&
+		p.Assignee.Login == user && p.Issue != nil
 }
 
 type CommentData struct {

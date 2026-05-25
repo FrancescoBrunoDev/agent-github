@@ -145,18 +145,25 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var texts []string
-	if payload.Issue != nil && payload.Issue.Body != "" {
-		texts = append(texts, payload.Issue.Body)
-	}
-	if payload.Comment != nil && payload.Comment.Body != "" {
-		texts = append(texts, payload.Comment.Body)
-	}
+	// Check if this is an assignment to our bot user (primary trigger)
+	botUser := os.Getenv("OTTO_BOT_USER")
+	assigned := botUser != "" && payload.IsAssignedTo(botUser)
 
-	if !webhook.IsMentioned(texts...) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"skipped":"@otto not mentioned"}`))
-		return
+	if !assigned {
+		// Fallback: check for @otto mention (legacy trigger)
+		var texts []string
+		if payload.Issue != nil && payload.Issue.Body != "" {
+			texts = append(texts, payload.Issue.Body)
+		}
+		if payload.Comment != nil && payload.Comment.Body != "" {
+			texts = append(texts, payload.Comment.Body)
+		}
+
+		if !webhook.IsMentioned(texts...) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"skipped":"@otto not mentioned"}`))
+			return
+		}
 	}
 
 	if payload.Repo == nil || payload.Issue == nil {
@@ -176,6 +183,13 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Inject per-repo environment variables from config
 	if repoCfg, ok := h.cfg.Repos[payload.Repo.FullName]; ok {
 		job.EnvVars = repoCfg.Env
+	}
+
+	// Set trigger type for the worker
+	if assigned {
+		os.Setenv("OTTO_TRIGGER_TYPE", "assign")
+	} else {
+		os.Setenv("OTTO_TRIGGER_TYPE", "mention")
 	}
 
 	if eventType == webhook.EventIssueComment || eventType == webhook.EventPullRequestReview {
@@ -242,7 +256,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 func isActionRelevant(action string) bool {
 	switch action {
-	case "opened", "edited", "created":
+	case "opened", "edited", "created", "assigned":
 		return true
 	}
 	return false
