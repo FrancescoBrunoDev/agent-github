@@ -1,29 +1,29 @@
-# Otto — AI GitHub Agent
+# Agent — AI GitHub Agent
 
-Otto is a GitHub App service that automatically solves GitHub issues by
+Agent is a GitHub App service that automatically solves GitHub issues by
 spawning isolated Docker containers running the [pi coding
 agent](https://github.com/earendil-works/pi) with a local LLM.
 
-**Trigger:** assign an issue to the bot user (e.g. `@otto-bot`) and Otto
-picks it up automatically. You can also mention `@otto` in a comment for
+**Trigger:** assign an issue to the bot user (e.g. `@agent-bot`) and Agent
+picks it up automatically. You can also mention `@agent` in a comment for
 legacy support or continuation mode.
 
 ## How it works
 
 ```
-Assign issue to @otto-bot
+Assign issue to @agent-bot
          │
          ▼
    GitHub webhook (issues: assigned)
          │
          ▼
-   Otto service (Go)
+   Agent service (Go)
     │         │
     ▼         ▼
   Queue   Worker manager
             │
             ▼
-      docker run otto-worker
+      docker run agent-worker
        ├── gh auth, git clone
        ├── devcontainer setup (mise)
        ├── pi agent ──▶ local LLM
@@ -33,12 +33,12 @@ Assign issue to @otto-bot
 
 ## Features
 
-- **Assignment-driven**: assign an issue to the bot user and Otto starts working
-- **Mention fallback**: `@otto` in comments still works for legacy and PR feedback
+- **Assignment-driven**: assign an issue to the bot user and Agent starts working
+- **Mention fallback**: `@agent` in comments still works for legacy and PR feedback
 - **Isolated**: each job runs in its own Docker container
 - **Local LLM**: no cloud API keys needed (uses llamacpp)
 - **Devcontainer-aware**: reads `.devcontainer/devcontainer.json` for tool versions
-- **Continuation**: comment `@otto` on a PR to trigger further changes
+- **Continuation**: comment `@agent` on a PR to trigger further changes
 - **Screenshots**: agent-browser artifacts are committed to the PR branch
 - **FIFO queue** with configurable concurrency
 - **Deduplication**: won't double-process the same issue/PR
@@ -55,14 +55,14 @@ Assign issue to @otto-bot
 
 ```bash
 # Build
-go build -o otto ./cmd/otto
+go build -o agent ./cmd/agent
 
 # Configure
 cp config.example.yaml config.yaml
 $EDITOR config.yaml   # fill in GitHub App credentials
 
 # Run
-./otto serve
+./agent serve
 ```
 
 ## Documentation

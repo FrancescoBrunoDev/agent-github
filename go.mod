@@ -1,4 +1,4 @@
-module github.com/agent-github/otto
+module github.com/agent-github/agent
 
 go 1.23
 

@@ -1,20 +1,20 @@
-# Otto configuration
+# Agent configuration
 listen_addr: ":9423"
 webhook_path: "/webhook"
 max_workers: 5
 media_dir: "./media"
 preview_dir: "./preview"
-base_url: "https://otto.francesco-bruno.com"
+base_url: "https://agent.francesco-bruno.com"
 
 github:
   app_id: 0
   installation_id: 0
-  private_key_file: "/etc/otto/github-app.pem"
+  private_key_file: "/etc/agent/github-app.pem"
   webhook_secret: ""
   # Bot user for actions the GitHub App cannot perform (issue assignment, etc.)
-  # Create a machine user account (e.g. @otto-bot), add it as repo collaborator,
+  # Create a machine user account (e.g. @agent-bot), add it as repo collaborator,
   # and generate a classic PAT with repo scope.
-  # bot_user: "otto-bot"
+  # bot_user: "agent-bot"
   # bot_token: "ghp_..."
 
 queue:
@@ -42,3 +42,7 @@ repos:
   #   env:
   #     MY_API_KEY: "..."
   #     DEBUG: "true"
+  #   nixpacks:
+  #     install_cmd: "pip install -r requirements.txt"
+  #     build_cmd: "npm run build"
+  #     start_cmd: "python app.py"

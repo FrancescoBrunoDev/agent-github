@@ -22,7 +22,7 @@ const (
 	acceptHeader = "application/vnd.github+json"
 )
 
-// Client wraps GitHub REST API calls authenticated as the Otto GitHub App.
+// Client wraps GitHub REST API calls authenticated as the Agent GitHub App.
 type Client struct {
 	appID          int64
 	installationID int64

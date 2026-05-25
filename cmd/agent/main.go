@@ -16,18 +16,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/agent-github/otto/internal/config"
-	"github.com/agent-github/otto/internal/github"
-	"github.com/agent-github/otto/internal/queue"
-	"github.com/agent-github/otto/internal/webhook"
-	"github.com/agent-github/otto/internal/worker"
+	"github.com/agent-github/agent/internal/config"
+	"github.com/agent-github/agent/internal/github"
+	"github.com/agent-github/agent/internal/queue"
+	"github.com/agent-github/agent/internal/webhook"
+	"github.com/agent-github/agent/internal/worker"
 	"github.com/spf13/cobra"
 )
 
 func main() {
 	root := &cobra.Command{
-		Use:   "otto",
-		Short: "Otto — GitHub issue solver powered by pi agent",
+		Use:   "agent",
+		Short: "Agent — GitHub issue solver powered by pi agent",
 	}
 
 	root.AddCommand(serveCmd())
@@ -57,22 +57,22 @@ func serveCmd() *cobra.Command {
 			q := queue.New(wm)
 
 			if cfg.Pi.Settings != nil {
-				os.Setenv("OTTO_PI_SETTINGS", cfg.Pi.Settings.SettingsJSON())
+				os.Setenv("AGENT_PI_SETTINGS", cfg.Pi.Settings.SettingsJSON())
 			}
 			if cfg.Pi.Models != "" {
-				os.Setenv("OTTO_PI_MODELS", cfg.Pi.Models)
+				os.Setenv("AGENT_PI_MODELS", cfg.Pi.Models)
 			if cfg.Pi.Auth != "" {
-				os.Setenv("OTTO_PI_AUTH", cfg.Pi.Auth)
+				os.Setenv("AGENT_PI_AUTH", cfg.Pi.Auth)
 			}
 			}
-			os.Setenv("OTTO_BASE_URL", cfg.BaseURL)
-			os.Setenv("OTTO_MEDIA_DIR", cfg.MediaDir)
-			os.Setenv("OTTO_PREVIEW_DIR", cfg.PreviewDir)
+			os.Setenv("AGENT_BASE_URL", cfg.BaseURL)
+			os.Setenv("AGENT_MEDIA_DIR", cfg.MediaDir)
+			os.Setenv("AGENT_PREVIEW_DIR", cfg.PreviewDir)
 			if cfg.GitHub.BotUser != "" {
-				os.Setenv("OTTO_BOT_USER", cfg.GitHub.BotUser)
+				os.Setenv("AGENT_BOT_USER", cfg.GitHub.BotUser)
 			}
 			if cfg.GitHub.BotToken != "" {
-				os.Setenv("OTTO_BOT_TOKEN", cfg.GitHub.BotToken)
+				os.Setenv("AGENT_BOT_TOKEN", cfg.GitHub.BotToken)
 			}
 
 			var ghClient *github.Client
@@ -114,7 +114,7 @@ func serveCmd() *cobra.Command {
 				srv.Shutdown(context.Background())
 			}()
 
-			log.Printf("Otto listening on %s (media: %s/media/)", cfg.ListenAddr, cfg.BaseURL)
+			log.Printf("Agent listening on %s (media: %s/media/)", cfg.ListenAddr, cfg.BaseURL)
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				return err
 			}
@@ -149,9 +149,9 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		log.Printf("webhook: PR closed event for %s/#%d", payload.Repo.FullName, payload.PullRequest.Number)
 		repoName := payload.Repo.Name
 		prNum := payload.PullRequest.Number
-		previewDir := os.Getenv("OTTO_PREVIEW_DIR")
+		previewDir := os.Getenv("AGENT_PREVIEW_DIR")
 		if previewDir == "" {
-			previewDir = os.TempDir() + "/otto-preview"
+			previewDir = os.TempDir() + "/agent-preview"
 		}
 
 		// Use Docker to clean up root-owned files
@@ -165,7 +165,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Stop and remove preview container
-		containerName := fmt.Sprintf("otto-preview-%s-%d", strings.ToLower(repoName), prNum)
+		containerName := fmt.Sprintf("agent-preview-%s-%d", strings.ToLower(repoName), prNum)
 		if out, err := exec.Command("docker", "rm", "-f", containerName).CombinedOutput(); err != nil {
 			log.Printf("preview container cleanup failed for %s: %v\n%s", containerName, err, string(out))
 		} else {
@@ -196,14 +196,14 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if this is an assignment to our bot user (primary trigger)
-	botUser := os.Getenv("OTTO_BOT_USER")
+	botUser := os.Getenv("AGENT_BOT_USER")
 	assigned := botUser != "" && payload.IsAssignedTo(botUser)
 
 	if !assigned {
 		// Fallback: check for @mention of our bot user
 		mentionUser := botUser
 		if mentionUser == "" {
-			mentionUser = "otto"
+			mentionUser = "agent"
 		}
 		var texts []string
 		if payload.Issue != nil && payload.Issue.Body != "" {
@@ -237,13 +237,18 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Inject per-repo environment variables from config
 	if repoCfg, ok := h.cfg.Repos[payload.Repo.FullName]; ok {
 		job.EnvVars = repoCfg.Env
+		if repoCfg.Nixpacks != nil {
+			job.NixpacksInstallCmd = repoCfg.Nixpacks.InstallCmd
+			job.NixpacksBuildCmd = repoCfg.Nixpacks.BuildCmd
+			job.NixpacksStartCmd = repoCfg.Nixpacks.StartCmd
+		}
 	}
 
 	// Set trigger type for the worker
 	if assigned {
-		os.Setenv("OTTO_TRIGGER_TYPE", "assign")
+		os.Setenv("AGENT_TRIGGER_TYPE", "assign")
 	} else {
-		os.Setenv("OTTO_TRIGGER_TYPE", "mention")
+		os.Setenv("AGENT_TRIGGER_TYPE", "mention")
 	}
 
 	if eventType == webhook.EventIssueComment || eventType == webhook.EventPullRequestReview {
@@ -302,10 +307,10 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 
 
-// reconcilePreviews ensures all existing otto-preview-* containers are running
+// reconcilePreviews ensures all existing agent-preview-* containers are running
 // and their port mappings are written to {previewDir}/{repo}-{pr}.port.
 func reconcilePreviews(previewDir string) {
-	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=otto-preview-",
+	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=agent-preview-",
 		"--format", "{{.Names}}\t{{.Status}}\t{{.Ports}}").Output()
 	if err != nil {
 		log.Printf("preview reconcile: docker ps failed: %v", err)
@@ -325,9 +330,9 @@ func reconcilePreviews(previewDir string) {
 			ports = parts[2]
 		}
 
-		// Extract repo and PR from container name: otto-preview-{repo}-{pr}
-		// Name format: otto-preview-test-otto-23
-		trimmed := strings.TrimPrefix(name, "otto-preview-")
+		// Extract repo and PR from container name: agent-preview-{repo}-{pr}
+		// Name format: agent-preview-test-23
+		trimmed := strings.TrimPrefix(name, "agent-preview-")
 		lastDash := strings.LastIndex(trimmed, "-")
 		if lastDash < 0 {
 			continue

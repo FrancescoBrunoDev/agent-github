@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Otto reads `config.yaml` from the working directory (or set `OTTO_CONFIG` env var).
+The service reads `config.yaml` from the working directory (or set `AGENT_CONFIG` env var).
 
 ## Full example with defaults
 
@@ -12,7 +12,7 @@ max_workers: 5
 github:
   app_id: 0
   installation_id: 0
-  private_key_file: "/etc/otto/github-app.pem"
+  private_key_file: "/etc/agent/github-app.pem"
   webhook_secret: ""
 
 queue:
@@ -153,9 +153,9 @@ docker run --network host \
   -e GITHUB_TOKEN=... \
   -e REPO_URL=... \
   -e ISSUE_NUMBER=... \
-  -e OTTO_PI_SETTINGS=... \
-  -e OTTO_PI_MODELS=... \
-  otto-worker:latest
+  -e AGENT_PI_SETTINGS=... \
+  -e AGENT_PI_MODELS=... \
+  agent-worker:latest
 ```
 
 Key details:
@@ -167,19 +167,19 @@ Key details:
 Build the worker image:
 
 ```bash
-docker build -f Dockerfile.worker -t otto-worker .
+docker build -f Dockerfile.worker -t agent-worker .
 ```
 
 ## CLI
 
 ```bash
-./otto serve              # Start the webhook server
-./otto config             # Print current config (with masked secrets)
-./otto queue              # List queue status
+./agent serve              # Start the webhook server
+./agent config             # Print current config (with masked secrets)
+./agent queue              # List queue status
 ```
 
 ## Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `OTTO_CONFIG` | Path to config file (default: `config.yaml`) |
+| `AGENT_CONFIG` | Path to config file (default: `config.yaml`) |

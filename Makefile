@@ -1,13 +1,13 @@
 .PHONY: build run devcontainer worker-image
 
 build:
-	go build -o otto ./cmd/otto
+	go build -o agent ./cmd/agent
 
 run: build
-	./otto serve
+	./agent serve
 
 devcontainer:
 	devcontainer build --workspace-folder .
 
 worker-image:
-	docker build -f Dockerfile.worker -t otto-worker .
+	docker build -f Dockerfile.worker -t agent-worker .

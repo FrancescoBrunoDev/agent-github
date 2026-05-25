@@ -28,7 +28,7 @@ type GitHubConfig struct {
 	InstallationID int64  `yaml:"installation_id"`
 	PrivateKeyFile string `yaml:"private_key_file"`
 	WebhookSecret  string `yaml:"webhook_secret"`
-	// BotUser is the GitHub username of a machine/bot user that Otto impersonates
+	// BotUser is the GitHub username of a machine/bot user that the agent impersonates
 	// for actions the App cannot perform (e.g., issue assignment).
 	BotUser string `yaml:"bot_user"`
 	// BotToken is a personal access token (PAT) for the bot user.
@@ -56,6 +56,16 @@ type RepoConfig struct {
 	// Env defines extra environment variables injected into the worker
 	// container for this repo (e.g., API keys, feature flags).
 	Env map[string]string `yaml:"env"`
+
+	// Nixpacks overrides for containerized preview builds.
+	Nixpacks *NixpacksConfig `yaml:"nixpacks"`
+}
+
+// NixpacksConfig overrides auto-detection when building preview containers.
+type NixpacksConfig struct {
+	InstallCmd string `yaml:"install_cmd"`
+	BuildCmd   string `yaml:"build_cmd"`
+	StartCmd   string `yaml:"start_cmd"`
 }
 
 // PiSettings holds the most common pi agent settings.
@@ -99,11 +109,11 @@ func Defaults() Config {
 	}
 }
 
-// Load reads config from the path in OTTO_CONFIG or defaults to ./config.yaml.
+// Load reads config from the path in AGENT_CONFIG or defaults to ./config.yaml.
 func Load() (*Config, error) {
 	cfg := Defaults()
 
-	path := os.Getenv("OTTO_CONFIG")
+	path := os.Getenv("AGENT_CONFIG")
 	if path == "" {
 		path = "config.yaml"
 	}

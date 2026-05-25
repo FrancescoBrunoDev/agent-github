@@ -1,4 +1,4 @@
-# Setup: Creating a GitHub App for Otto
+# Setup: Creating a GitHub App
 
 ## 1. Register the GitHub App
 
@@ -6,8 +6,8 @@
    (on your user: <https://github.com/settings/apps/new>, or org: `https://github.com/organizations/YOURORG/settings/apps/new`)
 
 2. Fill in:
-   - **Name**: `Otto` (or anything you like)
-   - **Homepage URL**: your domain or `https://github.com/YOU/otto`
+   - **Name**: Choose a name (e.g. `Agent`)
+   - **Homepage URL**: your domain or `https://github.com/YOU/agent`
    - **Webhook URL**: `https://your-domain.com/webhook`
      (must be publicly reachable; for local dev use a tunnel like ngrok)
    - **Webhook secret**: generate with `openssl rand -hex 32`, save it
@@ -45,7 +45,7 @@
 4. After installation, note the **Installation ID** from the URL:
    `https://github.com/settings/installations/12345678` ← that number
 
-## 3. Configure Otto
+## 3. Configure the service
 
 Edit `config.yaml`:
 
@@ -86,8 +86,8 @@ Example Traefik label (Docker):
 
 ```yaml
 labels:
-  traefik.http.routers.otto.rule: "Host(`otto.your-domain.com`)"
-  traefik.http.services.otto.loadbalancer.server.port: "9423"
+  traefik.http.routers.agent.rule: "Host(`agent.your-domain.com`)"
+  traefik.http.services.agent.loadbalancer.server.port: "9423"
 ```
 
 GitHub requires HTTPS for webhooks. A reverse proxy with Let's Encrypt handles this.
@@ -96,13 +96,13 @@ GitHub requires HTTPS for webhooks. A reverse proxy with Let's Encrypt handles t
 
 ```bash
 # Build the service
-go build -o otto ./cmd/otto
+go build -o agent ./cmd/agent
 
 # Build the worker image
-docker build -f Dockerfile.worker -t otto-worker .
+docker build -f Dockerfile.worker -t agent-worker .
 
 # Run
-./otto serve
+./agent serve
 ```
 
-Test by commenting `@otto` on an issue in an installed repository.
+Test by commenting `@agent` (or your configured bot user) on an issue in an installed repository.

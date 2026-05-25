@@ -3,7 +3,7 @@ package queue
 import (
 	"sync"
 
-	"github.com/agent-github/otto/internal/worker"
+	"github.com/agent-github/agent/internal/worker"
 )
 
 // Queue is a FIFO job queue. Accepts jobs and dispatches them to the worker Manager

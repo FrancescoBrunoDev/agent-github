@@ -19,7 +19,7 @@ const (
 	SignatureHeader         = "X-Hub-Signature-256"
 )
 
-// Payload is a partial GitHub webhook payload — just what Otto needs.
+// Payload is a partial GitHub webhook payload — just what the agent needs.
 type Payload struct {
 	Action      string           `json:"action"`
 	Issue       *IssueData       `json:"issue,omitempty"`

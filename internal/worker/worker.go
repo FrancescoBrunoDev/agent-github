@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	workerImage = "otto-worker:latest"
+	workerImage = "agent-worker:latest"
 )
 
 // Job represents a single issue to be solved.
@@ -25,7 +25,7 @@ type Job struct {
 	IssueBody  string
 	// GitHubToken is the installation access token for gh CLI and git operations.
 	GitHubToken string
-	// Continue indicates this is a continuation of an existing Otto PR (comment feedback).
+	// Continue indicates this is a continuation of an existing PR (comment feedback).
 	Continue bool
 	// Branch is the git branch to work on (for continuation, this is the existing PR head).
 	Branch string
@@ -34,6 +34,10 @@ type Job struct {
 	// EnvVars are extra environment variables injected into the worker container.
 	// Populated from config repos.<owner/repo>.env.
 	EnvVars map[string]string
+	// Nixpacks overrides for containerized preview builds.
+	NixpacksInstallCmd string
+	NixpacksBuildCmd   string
+	NixpacksStartCmd   string
 }
 
 // Status is the current state of a job.
@@ -86,19 +90,19 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		return fmt.Errorf("at capacity (%d/%d)", len(m.active), m.maxWorkers)
 	}
 
-	containerName := sanitizeName("otto-" + strings.ReplaceAll(job.ID, "/", "-"))
+	containerName := sanitizeName("agent-" + strings.ReplaceAll(job.ID, "/", "-"))
 
 	// Clean up any previous container with the same name
 	exec.Command("docker", "rm", "-f", containerName).Run()
 
 	log.Printf("worker: starting %s", containerName)
 
-	// Pi settings & models from env (set by otto serve from config)
-	piSettings := os.Getenv("OTTO_PI_SETTINGS")
+	// Pi settings & models from env (set by agent serve from config)
+	piSettings := os.Getenv("AGENT_PI_SETTINGS")
 	if piSettings == "" {
 		piSettings = "{}"
 	}
-	piModels := os.Getenv("OTTO_PI_MODELS")
+	piModels := os.Getenv("AGENT_PI_MODELS")
 	if piModels == "" {
 		piModels = "{}"
 	}
@@ -107,17 +111,17 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 	//   -e GITHUB_TOKEN=... -e REPO_URL=... -e ISSUE_NUMBER=... \
 	//   -e ISSUE_TITLE=... -e ISSUE_BODY=... -e LLM_API_KEY=... \
 	//   -v /var/run/docker.sock:/var/run/docker.sock \
-	//   -v <mediaDir>:/otto-media -v <previewDir>:/otto-preview \
-	//   otto-worker:latest
-	mediaDir := os.Getenv("OTTO_MEDIA_DIR")
+	//   -v <mediaDir>:/agent-media -v <previewDir>:/agent-preview \
+	//   agent-worker:latest
+	mediaDir := os.Getenv("AGENT_MEDIA_DIR")
 	if mediaDir == "" {
-		mediaDir = os.TempDir() + "/otto-media"
+		mediaDir = os.TempDir() + "/agent-media"
 	}
 	os.MkdirAll(mediaDir, 0755)
 
-	previewDir := os.Getenv("OTTO_PREVIEW_DIR")
+	previewDir := os.Getenv("AGENT_PREVIEW_DIR")
 	if previewDir == "" {
-		previewDir = os.TempDir() + "/otto-preview"
+		previewDir = os.TempDir() + "/agent-preview"
 	}
 	os.MkdirAll(previewDir, 0755)
 
@@ -131,19 +135,22 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		"-e", "ISSUE_TITLE=" + job.IssueTitle,
 		"-e", "ISSUE_BODY=" + job.IssueBody,
 		"-e", "LLM_API_KEY=" + envOrEmpty("LLM_API_KEY"),
-		"-e", "OTTO_PI_SETTINGS=" + piSettings,
-		"-e", "OTTO_PI_MODELS=" + piModels,
-		"-e", "OTTO_PI_AUTH=" + envOrEmpty("OTTO_PI_AUTH"),
-		"-e", fmt.Sprintf("OTTO_CONTINUE=%v", job.Continue),
-		"-e", "OTTO_FEEDBACK=" + job.Feedback,
-		"-e", "OTTO_BRANCH=" + job.Branch,
-		"-e", "OTTO_BASE_URL=" + os.Getenv("OTTO_BASE_URL"),
-		"-e", "OTTO_BOT_USER=" + envOrEmpty("OTTO_BOT_USER"),
-		"-e", "OTTO_BOT_TOKEN=" + envOrEmpty("OTTO_BOT_TOKEN"),
-		"-e", "OTTO_TRIGGER_TYPE=" + envOrEmpty("OTTO_TRIGGER_TYPE"),
+		"-e", "AGENT_PI_SETTINGS=" + piSettings,
+		"-e", "AGENT_PI_MODELS=" + piModels,
+		"-e", "AGENT_PI_AUTH=" + envOrEmpty("AGENT_PI_AUTH"),
+		"-e", fmt.Sprintf("AGENT_CONTINUE=%v", job.Continue),
+		"-e", "AGENT_FEEDBACK=" + job.Feedback,
+		"-e", "AGENT_BRANCH=" + job.Branch,
+		"-e", "AGENT_BASE_URL=" + os.Getenv("AGENT_BASE_URL"),
+		"-e", "AGENT_BOT_USER=" + envOrEmpty("AGENT_BOT_USER"),
+		"-e", "AGENT_BOT_TOKEN=" + envOrEmpty("AGENT_BOT_TOKEN"),
+		"-e", "AGENT_TRIGGER_TYPE=" + envOrEmpty("AGENT_TRIGGER_TYPE"),
+		"-e", "AGENT_NIXPACKS_INSTALL_CMD=" + job.NixpacksInstallCmd,
+		"-e", "AGENT_NIXPACKS_BUILD_CMD=" + job.NixpacksBuildCmd,
+		"-e", "AGENT_NIXPACKS_START_CMD=" + job.NixpacksStartCmd,
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
-		"-v", mediaDir + ":/otto-media",
-		"-v", previewDir + ":/otto-preview",
+		"-v", mediaDir + ":/agent-media",
+		"-v", previewDir + ":/agent-preview",
 		"--network", "host",
 		workerImage,
 	}
@@ -241,7 +248,7 @@ func (m *Manager) Capacity() int {
 func (m *Manager) IsActive(jobID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	containerName := sanitizeName("otto-" + strings.ReplaceAll(jobID, "/", "-"))
+	containerName := sanitizeName("agent-" + strings.ReplaceAll(jobID, "/", "-"))
 	_, ok := m.active[containerName]
 	return ok
 }

@@ -1,5 +1,5 @@
 {
-  "name": "Otto Dev",
+  "name": "Agent Dev",
   "image": "mcr.microsoft.com/devcontainers/go:1.23",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},

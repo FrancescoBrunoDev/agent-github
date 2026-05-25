@@ -1,14 +1,14 @@
-# AGENT.md — Otto (agent-github)
+# AGENT.md — Agent (agent-github)
 
 ## Project overview
 
-Otto is a **GitHub App** service that automatically solves GitHub issues via the
-[pi coding agent](https://github.com/earendil-works/pi). A user mentions the configured bot user (e.g. `@otto-bot`, defaults to `@otto`)
-in an issue or PR comment, and Otto spawns an isolated Docker container that
+Agent is a **GitHub App** service that automatically solves GitHub issues via the
+[pi coding agent](https://github.com/earendil-works/pi). A user mentions the configured bot user (e.g. `@agent-bot`, defaults to `@agent`)
+in an issue or PR comment, and Agent spawns an isolated Docker container that
 clones the repo, runs the pi agent with a local LLM, implements the fix, and
 opens a pull request — fully automated.
 
-- **Go** service (binary `otto`) listens for GitHub webhooks, manages a FIFO
+- **Go** service (binary `agent`) listens for GitHub webhooks, manages a FIFO
   queue, and spawns Docker sibling containers to do the actual work.
 - **Worker containers** run an Ubuntu image with git, gh CLI, Node.js,
   pi agent, agent-browser, and Chromium. They execute `worker-entrypoint.sh`.
@@ -16,7 +16,7 @@ opens a pull request — fully automated.
 ## Repository layout
 
 ```
-cmd/otto/main.go              # CLI entrypoint (cobra), serve command, webhook handler
+cmd/agent/main.go              # CLI entrypoint (cobra), serve command, webhook handler
 internal/
   config/config.go            # YAML config loading, defaults
   github/client.go            # GitHub REST API client (JWT, installation tokens, comments, PRs)
@@ -42,14 +42,14 @@ mise.toml                     # mise tool version: go=latest
 GitHub webhook (issue/comment)
         │
         ▼
-otto serve (Go, :9423)
+agent serve (Go, :9423)
  ├── HMAC verification (X-Hub-Signature-256)
- ├── @mention detection (regex built from configured bot user, default @otto)
+ ├── @mention detection (regex built from configured bot user, default @agent)
  ├── Queue (FIFO, in-memory, max N concurrent)
  └── Worker manager
       │
       ▼
-docker run otto-worker:latest
+docker run agent-worker:latest
  ├── gh auth (installation token)
  ├── git clone <repo>
  ├── mise / devcontainer setup (if .devcontainer/ exists)
@@ -64,9 +64,9 @@ docker run otto-worker:latest
 - **Identity**: GitHub App (JWT → installation token), NOT personal access tokens.
 - **Isolation**: One Docker container per job, destroyed when done.
 - **Trigger**: Assignment to the configured bot user, or @mention — never acts on its own.
-- **Continuation**: Commenting `@otto` on an existing Otto PR triggers
+- **Continuation**: Commenting `@agent` on an existing PR triggers
   continuation mode (checks out the PR branch, applies feedback).
-- **Deduplication**: If a job ID is already active, Otto posts an
+- **Deduplication**: If a job ID is already active, Agent posts an
   acknowledgement comment and does not re-enqueue.
 - **Devcontainer-aware**: Workers detect `.devcontainer/devcontainer.json`
   and install the repo's declared Node.js version via mise.
@@ -83,8 +83,8 @@ docker run otto-worker:latest
 ### Build
 
 ```bash
-go build -o otto ./cmd/otto          # Build the service binary
-docker build -f Dockerfile.worker -t otto-worker .  # Build worker image
+go build -o agent ./cmd/agent          # Build the service binary
+docker build -f Dockerfile.worker -t agent-worker .  # Build worker image
 ```
 
 ### Run
@@ -92,15 +92,15 @@ docker build -f Dockerfile.worker -t otto-worker .  # Build worker image
 ```bash
 cp config.example.yaml config.yaml
 $EDITOR config.yaml                  # Fill in GitHub App credentials + LLM settings
-./otto serve                         # Start the webhook server
+./agent serve                         # Start the webhook server
 ```
 
 ### CLI commands
 
 ```
-otto serve      Start the webhook server
-otto queue      Manage the job queue (stub, not yet implemented)
-otto config     Show or validate configuration
+agent serve      Start the webhook server
+agent queue      Manage the job queue (stub, not yet implemented)
+agent config     Show or validate configuration
 ```
 
 ### Dev container
@@ -111,7 +111,7 @@ make devcontainer   # Opens VS Code in the repo's dev container
 
 ## Configuration
 
-Config is loaded from `$OTTO_CONFIG` or `./config.yaml`. See `config.example.yaml`
+Config is loaded from `$AGENT_CONFIG` or `./config.yaml`. See `config.example.yaml`
 for the full schema. Key sections:
 
 | Section | Key fields |
@@ -132,7 +132,7 @@ Pi settings and models are written to `~/.pi/agent/settings.json` and
    unmarshals into `Payload`.
 3. Handler checks `action` ∈ `{opened, edited, created}`, then calls
    `webhook.IsMentioned()` on issue body + comment body.
-4. If `@otto` found → build a `worker.Job` struct. If the event is a comment on
+4. If `@agent` found → build a `worker.Job` struct. If the event is a comment on
    an existing PR (detected via `payload.Issue.IsPullRequest()`), set
    `Job.Continue = true`, fetch the PR head branch via `ghClient.GetPRHead()`,
    and store the comment text in `Job.Feedback`.
@@ -140,10 +140,10 @@ Pi settings and models are written to `~/.pi/agent/settings.json` and
    it to the job.
 6. Check `queue.IsActive(job.ID)` for dedup; if active, ack the comment and skip.
 7. `queue.Enqueue(job)` → starts immediately if capacity available, else waits.
-8. `worker.Manager.Start()` executes `docker run ... otto-worker:latest` with
+8. `worker.Manager.Start()` executes `docker run ... agent-worker:latest` with
    env vars: `GITHUB_TOKEN`, `REPO_URL`, `ISSUE_NUMBER`, `ISSUE_TITLE`,
-   `ISSUE_BODY`, `LLM_API_KEY`, `OTTO_PI_SETTINGS`, `OTTO_PI_MODELS`,
-   `OTTO_CONTINUE`, `OTTO_FEEDBACK`, `OTTO_BRANCH`.
+   `ISSUE_BODY`, `LLM_API_KEY`, `AGENT_PI_SETTINGS`, `AGENT_PI_MODELS`,
+   `AGENT_CONTINUE`, `AGENT_FEEDBACK`, `AGENT_BRANCH`.
 9. Worker container runs `worker-entrypoint.sh`: auth, clone, devcontainer
    setup, pi agent invocation, git operations, screenshot handling.
 10. Manager goroutine `monitor()` runs `docker wait`, collects logs, removes
@@ -151,8 +151,8 @@ Pi settings and models are written to `~/.pi/agent/settings.json` and
 
 ### Continuation mode
 
-When `OTTO_CONTINUE=true`:
-- The worker checks out the existing PR branch (`OTTO_BRANCH`) instead of
+When `AGENT_CONTINUE=true`:
+- The worker checks out the existing PR branch (`AGENT_BRANCH`) instead of
   creating a new one.
 - The prompt to pi includes the full conversation history plus the latest
   feedback comment.
@@ -229,7 +229,7 @@ Actions accepted: `opened`, `edited`, `created`.
   explicit error returns.
 - Worker manager uses `sync.Mutex` to protect the active jobs map.
 - Queue is also mutex-protected; `tryDispatch()` is called under lock.
-- Container names: `otto-<owner>-<repo>-#<number>` with sanitization
+- Container names: `agent-<owner>-<repo>-#<number>` with sanitization
   (lowercase, non-alphanumeric chars → `-`).
 - Error handling: worker-level errors (container crash, non-zero exit) are
   logged but not retried; GitHub re-delivers webhooks on failure.
@@ -241,12 +241,12 @@ Actions accepted: `opened`, `edited`, `created`.
 | `config.yaml` | Active config with secrets — **gitignored, never commit** |
 | `config.example.yaml` | Documented template — safe to commit |
 | `*.pem` files | Private keys — **never commit** |
-| `otto` binary | Built Go binary — gitignored |
+| `agent` binary | Built Go binary — gitignored |
 | `screenshots/` | Created by workers in target repos, not in this repo |
 
 ## TODO / unfinished
 
-- `otto queue` command is a stub (prints "not yet implemented")
+- `agent queue` command is a stub (prints "not yet implemented")
 - Queue type is only "memory" (config mentions Redis but not implemented)
 - No TUI (mentioned in PROMPT.md but not started)
 - No PR review feedback loop beyond continuation mode
@@ -259,8 +259,8 @@ Actions accepted: `opened`, `edited`, `created`.
 Pi configuration is injected into workers via two env vars set by the serve
 command:
 
-- `OTTO_PI_SETTINGS` — JSON, goes to `~/.pi/agent/settings.json`
-- `OTTO_PI_MODELS` — raw JSON, goes to `~/.pi/agent/models.json`
+- `AGENT_PI_SETTINGS` — JSON, goes to `~/.pi/agent/settings.json`
+- `AGENT_PI_MODELS` — raw JSON, goes to `~/.pi/agent/models.json`
 
 These are read from `config.yaml`'s `pi:` section. The `models` field is raw
 YAML literal block scalar (`|`), containing arbitrary JSON — this is

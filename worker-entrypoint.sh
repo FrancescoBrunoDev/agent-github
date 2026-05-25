@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "==> Otto worker starting for ${REPO_URL}#${ISSUE_NUMBER}"
-echo "==> Mode: ${OTTO_CONTINUE:+CONTINUATION}${OTTO_CONTINUE:-NEW}"
+echo "==> Agent worker starting for ${REPO_URL}#${ISSUE_NUMBER}"
+echo "==> Mode: ${AGENT_CONTINUE:+CONTINUATION}${AGENT_CONTINUE:-NEW}"
 
 REPO_OWNER=$(echo "${REPO_URL}" | sed -n 's|https://github.com/\([^/]*\)/.*|\1|p')
 REPO_NAME=$(echo "${REPO_URL}" | sed -n 's|https://github.com/[^/]*/\([^.]*\).*|\1|p')
@@ -10,24 +10,24 @@ REPO_NAME=$(echo "${REPO_URL}" | sed -n 's|https://github.com/[^/]*/\([^.]*\).*|
 # ---- Set up pi agent configuration ----
 mkdir -p ~/.pi/agent
 
-if [ -n "${OTTO_PI_SETTINGS:-}" ] && [ "${OTTO_PI_SETTINGS}" != "{}" ]; then
-    echo "${OTTO_PI_SETTINGS}" > ~/.pi/agent/settings.json
+if [ -n "${AGENT_PI_SETTINGS:-}" ] && [ "${AGENT_PI_SETTINGS}" != "{}" ]; then
+    echo "${AGENT_PI_SETTINGS}" > ~/.pi/agent/settings.json
     echo "==> Pi settings written"
 fi
 
-if [ -n "${OTTO_PI_MODELS:-}" ] && [ "${OTTO_PI_MODELS}" != "{}" ]; then
-    echo "${OTTO_PI_MODELS}" > ~/.pi/agent/models.json
+if [ -n "${AGENT_PI_MODELS:-}" ] && [ "${AGENT_PI_MODELS}" != "{}" ]; then
+    echo "${AGENT_PI_MODELS}" > ~/.pi/agent/models.json
     echo "==> Pi models written"
 fi
 
-if [ -n "${OTTO_PI_AUTH:-}" ] && [ "${OTTO_PI_AUTH}" != "{}" ]; then
-    echo "${OTTO_PI_AUTH}" > ~/.pi/agent/auth.json
+if [ -n "${AGENT_PI_AUTH:-}" ] && [ "${AGENT_PI_AUTH}" != "{}" ]; then
+    echo "${AGENT_PI_AUTH}" > ~/.pi/agent/auth.json
     echo "==> Pi auth written"
 fi
 
 # Auth: use bot token for gh CLI (comments, PRs) if available, else installation token
-if [ -n "${OTTO_BOT_TOKEN:-}" ]; then
-    export GH_TOKEN="${OTTO_BOT_TOKEN}"
+if [ -n "${AGENT_BOT_TOKEN:-}" ]; then
+    export GH_TOKEN="${AGENT_BOT_TOKEN}"
     echo "==> Using bot user token for gh operations"
 else
     export GH_TOKEN="${GITHUB_TOKEN}"
@@ -43,12 +43,12 @@ AUTH_REPO_URL=$(echo "${REPO_URL}" | sed "s|https://|https://x-access-token:${GI
 git clone "${AUTH_REPO_URL}" /workspace 2>&1
 cd /workspace
 
-git config user.name "${OTTO_BOT_USER:-Otto}"
-git config user.email "${OTTO_BOT_USER:-otto}@francesco-bruno.com"
+git config user.name "${AGENT_BOT_USER:-Agent}"
+git config user.email "${AGENT_BOT_USER:-agent}@francesco-bruno.com"
 git config remote.origin.url "${AUTH_REPO_URL}"
 
 # ---- Determine branch ----
-BRANCH="${OTTO_BRANCH:-otto/issue-${ISSUE_NUMBER}}"
+BRANCH="${AGENT_BRANCH:-agent/issue-${ISSUE_NUMBER}}"
 
 # ---- Fetch conversation ----
 CONVERSATION="## Original issue\n\n**Title:** ${ISSUE_TITLE}\n\n${ISSUE_BODY}"
@@ -63,13 +63,13 @@ echo "Working comment: ${WORKING_COMMENT_URL}"
 WORKING_COMMENT_ID=$(echo "${WORKING_COMMENT_URL}" | grep -oP 'issuecomment-\K[0-9]+' || echo "")
 
 # ---- Self-assign issue (if bot user configured and not already assigned) ----
-if [ "${OTTO_TRIGGER_TYPE:-}" != "assign" ] && [ -n "${OTTO_BOT_USER:-}" ] && [ -n "${OTTO_BOT_TOKEN:-}" ]; then
-    echo "==> Self-assigning issue to ${OTTO_BOT_USER}..."
-    gh issue edit "${ISSUE_NUMBER}" --add-assignee "${OTTO_BOT_USER}" 2>&1 || true
+if [ "${AGENT_TRIGGER_TYPE:-}" != "assign" ] && [ -n "${AGENT_BOT_USER:-}" ] && [ -n "${AGENT_BOT_TOKEN:-}" ]; then
+    echo "==> Self-assigning issue to ${AGENT_BOT_USER}..."
+    gh issue edit "${ISSUE_NUMBER}" --add-assignee "${AGENT_BOT_USER}" 2>&1 || true
 fi
 
 # ---- Branch / prompt logic ----
-if [ "${OTTO_CONTINUE:-false}" = "true" ]; then
+if [ "${AGENT_CONTINUE:-false}" = "true" ]; then
     echo "==> CONTINUATION mode — checking out ${BRANCH}"
     git fetch origin "${BRANCH}" 2>&1 || {
         gh issue comment "${ISSUE_NUMBER}" --body "❌ I couldn't find the branch \`${BRANCH}\` to continue." 2>&1 || true
@@ -78,7 +78,7 @@ if [ "${OTTO_CONTINUE:-false}" = "true" ]; then
     git checkout "${BRANCH}" 2>&1
 
     cat > /tmp/prompt.md <<PROMPT
-You are Otto, an AI agent that solves GitHub issues.
+You are Agent, an AI agent that solves GitHub issues.
 
 This is a **continuation** of your previous work on issue #${ISSUE_NUMBER}.
 A reviewer left feedback on your pull request. Read the full conversation.
@@ -89,7 +89,7 @@ ${CONVERSATION}
 
 ## Latest Feedback
 
-${OTTO_FEEDBACK}
+${AGENT_FEEDBACK}
 
 ## Instructions
 
@@ -108,7 +108,7 @@ else
     echo "==> NEW issue mode — will create branch ${BRANCH}"
 
     cat > /tmp/prompt.md <<PROMPT
-You are Otto, an AI agent that solves GitHub issues.
+You are Agent, an AI agent that solves GitHub issues.
 
 Your task is to resolve the following issue.
 
@@ -191,50 +191,54 @@ if [ -n "${WORKING_COMMENT_ID:-}" ]; then
     gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${WORKING_COMMENT_ID}" -X DELETE 2>&1 || true
 fi
 
-# ---- Upload screenshots to Otto media server ----
+# ---- Upload screenshots to agent media server ----
 echo "==> Checking for screenshots..."
-mkdir -p /tmp/otto-upload /otto-media
+mkdir -p /tmp/agent-upload /agent-media
 
 # Only upload images created during this pi run (not stale repo files)
 find /workspace -maxdepth 1 \( -name "*.png" -o -name "*.jpg" -o -name "*.gif" -o -name "*.webp" \) -type f 2>/dev/null | while read img; do
     if ! grep -qFx "$img" /tmp/files-before-pi.txt 2>/dev/null; then
         NEWNAME="issue-${ISSUE_NUMBER}-$(basename "${img}")"
-        cp "${img}" "/tmp/otto-upload/${NEWNAME}"
-        cp "${img}" "/otto-media/${NEWNAME}"
+        cp "${img}" "/tmp/agent-upload/${NEWNAME}"
+        cp "${img}" "/agent-media/${NEWNAME}"
     fi
 done
 
-if [ "$(ls -A /tmp/otto-upload 2>/dev/null)" ]; then
-    echo "==> Publishing screenshots via Otto..."
+if [ "$(ls -A /tmp/agent-upload 2>/dev/null)" ]; then
+    echo "==> Publishing screenshots..."
     
     COMMENT_BODY="📸 **Screenshots:**"
-    for img in /tmp/otto-upload/*; do
+    for img in /tmp/agent-upload/*; do
         FNAME=$(basename "${img}")
-        cp "${img}" "/otto-media/${FNAME}"
-        COMMENT_BODY="${COMMENT_BODY}"$'\n'"![${FNAME}](${OTTO_BASE_URL}/media/${FNAME})"
+        cp "${img}" "/agent-media/${FNAME}"
+        COMMENT_BODY="${COMMENT_BODY}"$'\n'"![${FNAME}](${AGENT_BASE_URL}/media/${FNAME})"
     done
     gh issue comment "${ISSUE_NUMBER}" --body "${COMMENT_BODY}" 2>&1 || true
 fi
 
-rm -rf /tmp/otto-upload
+rm -rf /tmp/agent-upload
 
 # ---- Deploy containerized preview via Nixpacks ----
 echo "==> Building containerized preview..."
 
 # Clean up any previous preview container for this PR
-PREVIEW_CONTAINER="otto-preview-${REPO_NAME}"
+PREVIEW_CONTAINER="agent-preview-${REPO_NAME}"
 docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
 
 PR_URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
 if [ -n "$PR_URL" ]; then
     PR_NUMBER=$(echo "$PR_URL" | grep -oP '/pull/\K[0-9]+' || echo "")
     if [ -n "$PR_NUMBER" ]; then
-        PREVIEW_IMAGE="otto-preview-${REPO_NAME,,}-${PR_NUMBER}"
+        PREVIEW_IMAGE="agent-preview-${REPO_NAME,,}-${PR_NUMBER}"
         PREVIEW_CONTAINER="${PREVIEW_IMAGE}"
 
-        # Build image with Nixpacks
+        # Build image with Nixpacks (per-repo overrides supported)
+        NIXPACKS_ARGS=()
+        [ -n "${AGENT_NIXPACKS_INSTALL_CMD:-}" ] && NIXPACKS_ARGS+=(--install-cmd "${AGENT_NIXPACKS_INSTALL_CMD}")
+        [ -n "${AGENT_NIXPACKS_BUILD_CMD:-}" ] && NIXPACKS_ARGS+=(--build-cmd "${AGENT_NIXPACKS_BUILD_CMD}")
+        [ -n "${AGENT_NIXPACKS_START_CMD:-}" ] && NIXPACKS_ARGS+=(--start-cmd "${AGENT_NIXPACKS_START_CMD}")
         echo "==> Nixpacks building ${PREVIEW_IMAGE}..."
-        if nixpacks build /workspace --name "${PREVIEW_IMAGE}" 2>&1; then
+        if nixpacks build /workspace --name "${PREVIEW_IMAGE}" "${NIXPACKS_ARGS[@]}" 2>&1; then
             # Stop old container, run new one on random port
             docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
             docker run -d --name "${PREVIEW_CONTAINER}" \
@@ -256,10 +260,10 @@ if [ -n "$PR_URL" ]; then
                 done
                 
                 if [ -n "$PORT" ]; then
-                    mkdir -p /otto-preview
-                    echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                    mkdir -p /agent-preview
+                    echo "$PORT" > "/agent-preview/${REPO_NAME}-${PR_NUMBER}.port"
                     echo "==> Preview running on port ${PORT}"
-                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                 else
                     echo "==> WARNING: could not determine preview port"
                     docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -285,12 +289,12 @@ if [ -n "$PR_URL" ]; then
 
                 if [ -n "$STATIC_DIR" ]; then
                     echo "==> Found build output: /workspace/$STATIC_DIR"
-                    cat > /workspace/Dockerfile.otto <<DOCKERFILE
+                    cat > /workspace/Dockerfile.agent <<DOCKERFILE
 FROM nginx:alpine
 COPY $STATIC_DIR /usr/share/nginx/html
 DOCKERFILE
                     echo "==> Building static preview from /workspace/$STATIC_DIR..."
-                    BUILD_OUT=$(docker build -t "${PREVIEW_IMAGE}" -f /workspace/Dockerfile.otto /workspace 2>&1)
+                    BUILD_OUT=$(docker build -t "${PREVIEW_IMAGE}" -f /workspace/Dockerfile.agent /workspace 2>&1)
                     BUILD_EXIT=$?
                     echo "$BUILD_OUT"
                     if [ $BUILD_EXIT -eq 0 ]; then
@@ -303,10 +307,10 @@ DOCKERFILE
                             sleep 1
                         done
                         if [ -n "$PORT" ]; then
-                            mkdir -p /otto-preview
-                            echo "$PORT" > "/otto-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                            mkdir -p /agent-preview
+                            echo "$PORT" > "/agent-preview/${REPO_NAME}-${PR_NUMBER}.port"
                             echo "==> Static preview running on port ${PORT}"
-                            gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                            gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                             PREVIEW_BUILT=true
                         else
                             docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -321,9 +325,9 @@ DOCKERFILE
             if [ "$PREVIEW_BUILT" != true ]; then
                 echo "==> Falling back to file copy..."
                 if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
-                    mkdir -p "/otto-preview/${REPO_NAME}/${PR_NUMBER}"
-                    cp -r /workspace/preview/* "/otto-preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1
-                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    mkdir -p "/agent-preview/${REPO_NAME}/${PR_NUMBER}"
+                    cp -r /workspace/preview/* "/agent-preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1
+                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                     PREVIEW_BUILT=true
                 fi
             fi
@@ -334,7 +338,7 @@ DOCKERFILE
             fi
 
             # Comment preview link on the PR
-            PREVIEW_LINK="${OTTO_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/"
+            PREVIEW_LINK="${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/"
             if [ "$PREVIEW_BUILT" = true ]; then
                 gh pr comment "${PR_NUMBER}" --body "🌐 **Preview:** ${PREVIEW_LINK}" 2>&1 || true
             fi
