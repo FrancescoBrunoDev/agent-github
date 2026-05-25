@@ -413,6 +413,13 @@ func previewHandler(previewDir string) http.Handler {
 			port := strings.TrimSpace(string(portBytes))
 			target, _ := url.Parse("http://localhost:" + port)
 			proxy := httputil.NewSingleHostReverseProxy(target)
+			prefix := "/preview/" + repo + "/" + pr
+			proxy.ModifyResponse = func(resp *http.Response) error {
+				if loc := resp.Header.Get("Location"); loc != "" && strings.HasPrefix(loc, "/") {
+					resp.Header.Set("Location", prefix+loc)
+				}
+				return nil
+			}
 			r.URL.Path = "/" + strings.Join(parts[2:], "/")
 			proxy.ServeHTTP(w, r)
 			return
