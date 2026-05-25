@@ -20,21 +20,26 @@ if [ -n "${OTTO_PI_MODELS:-}" ] && [ "${OTTO_PI_MODELS}" != "{}" ]; then
     echo "==> Pi models written"
 fi
 
-# ---- Auth ----
+# Auth: use bot token for gh CLI (comments, PRs) if available, else installation token
+if [ -n "${OTTO_BOT_TOKEN:-}" ]; then
+    export GH_TOKEN="${OTTO_BOT_TOKEN}"
+    echo "==> Using bot user token for gh operations"
+else
+    export GH_TOKEN="${GITHUB_TOKEN}"
+fi
+gh auth status 2>&1 || true
+
+# ---- Clone repo (always uses installation token via URL) ----
 if [ -z "${GITHUB_TOKEN:-}" ]; then
     echo "==> ERROR: GITHUB_TOKEN is empty"
     exit 1
 fi
-export GH_TOKEN="${GITHUB_TOKEN}"
-gh auth status 2>&1 || true
-
-# ---- Clone repo ----
 AUTH_REPO_URL=$(echo "${REPO_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
 git clone "${AUTH_REPO_URL}" /workspace 2>&1
 cd /workspace
 
-git config user.name "Otto"
-git config user.email "otto@francesco-bruno.com"
+git config user.name "${OTTO_BOT_USER:-Otto}"
+git config user.email "${OTTO_BOT_USER:-otto}@francesco-bruno.com"
 git config remote.origin.url "${AUTH_REPO_URL}"
 
 # ---- Determine branch ----
@@ -55,7 +60,7 @@ WORKING_COMMENT_ID=$(echo "${WORKING_COMMENT_URL}" | grep -oP 'issuecomment-\K[0
 # ---- Self-assign issue (if bot user configured and not already assigned) ----
 if [ "${OTTO_TRIGGER_TYPE:-}" != "assign" ] && [ -n "${OTTO_BOT_USER:-}" ] && [ -n "${OTTO_BOT_TOKEN:-}" ]; then
     echo "==> Self-assigning issue to ${OTTO_BOT_USER}..."
-    GH_TOKEN="${OTTO_BOT_TOKEN}" gh issue edit "${ISSUE_NUMBER}" --add-assignee "${OTTO_BOT_USER}" 2>&1 || true
+    gh issue edit "${ISSUE_NUMBER}" --add-assignee "${OTTO_BOT_USER}" 2>&1 || true
 fi
 
 # ---- Branch / prompt logic ----
