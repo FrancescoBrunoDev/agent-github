@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/agent-github/otto/internal/config"
 	"github.com/agent-github/otto/internal/github"
@@ -96,6 +97,9 @@ func serveCmd() *cobra.Command {
 			// Serve project previews (containerized or static fallback)
 			os.MkdirAll(cfg.PreviewDir, 0755)
 			mux.Handle("/preview/", previewHandler(cfg.PreviewDir))
+
+			// Reconcile existing preview containers on startup
+			reconcilePreviews(cfg.PreviewDir)
 
 			srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux}
 
@@ -301,6 +305,84 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+
+
+// reconcilePreviews ensures all existing otto-preview-* containers are running
+// and their port mappings are written to {previewDir}/{repo}-{pr}.port.
+func reconcilePreviews(previewDir string) {
+	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=otto-preview-",
+		"--format", "{{.Names}}\t{{.Status}}\t{{.Ports}}").Output()
+	if err != nil {
+		log.Printf("preview reconcile: docker ps failed: %v", err)
+		return
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		name, status, ports := parts[0], parts[1], ""
+		if len(parts) > 2 {
+			ports = parts[2]
+		}
+
+		// Extract repo and PR from container name: otto-preview-{repo}-{pr}
+		// Name format: otto-preview-test-otto-23
+		trimmed := strings.TrimPrefix(name, "otto-preview-")
+		lastDash := strings.LastIndex(trimmed, "-")
+		if lastDash < 0 {
+			continue
+		}
+		repo := trimmed[:lastDash]
+		pr := trimmed[lastDash+1:]
+
+		// Start container if stopped
+		if strings.HasPrefix(status, "Exited") || strings.HasPrefix(status, "Created") {
+			log.Printf("preview reconcile: starting %s", name)
+			exec.Command("docker", "start", name).Run()
+			// Refresh status after start
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		// Get port mapping
+		var port string
+		if strings.Contains(ports, "->") {
+			// Parse "0.0.0.0:32768->3000/tcp"
+			for _, mapping := range strings.Split(ports, ", ") {
+				parts := strings.SplitN(mapping, "->", 2)
+				if len(parts) == 2 {
+					hostPart := strings.Split(parts[0], ":")
+					if len(hostPart) == 2 {
+						port = hostPart[1]
+						break
+					}
+				}
+			}
+		} else {
+			// Try docker port command
+			for _, containerPort := range []string{"3000", "8080", "80"} {
+				portOut, _ := exec.Command("docker", "port", name, containerPort).Output()
+				if len(portOut) > 0 {
+					parts := strings.SplitN(strings.TrimSpace(string(portOut)), ":", 2)
+					if len(parts) == 2 {
+						port = parts[1]
+						break
+					}
+				}
+			}
+		}
+
+		if port != "" {
+			portFile := filepath.Join(previewDir, repo+"-"+pr+".port")
+			os.WriteFile(portFile, []byte(port), 0644)
+			log.Printf("preview reconcile: %s → port %s (%s)", name, port, portFile)
+		}
+	}
+}
 
 // previewHandler serves containerized previews via reverse proxy,
 // falling back to static files if no container is running.
