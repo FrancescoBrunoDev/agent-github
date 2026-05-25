@@ -233,7 +233,7 @@ if [ -n "$PR_URL" ]; then
             # Stop old container, run new one on random port
             docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
             docker run -d --name "${PREVIEW_CONTAINER}" \
-                -P \
+                -p 0:3000 -p 0:8080 \
                 --restart unless-stopped \
                 "${PREVIEW_IMAGE}" 2>&1
             
@@ -290,7 +290,7 @@ DOCKERFILE
                     echo "$BUILD_OUT"
                     if [ $BUILD_EXIT -eq 0 ]; then
                         docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
-                        docker run -d --name "${PREVIEW_CONTAINER}" -P "${PREVIEW_IMAGE}" 2>&1
+                        docker run -d --name "${PREVIEW_CONTAINER}" -p 0:80 "${PREVIEW_IMAGE}" 2>&1
                         PORT=""
                         for i in $(seq 1 5); do
                             PORT=$(docker port "${PREVIEW_CONTAINER}" 80 2>/dev/null | head -1 | cut -d: -f2 || echo "")
