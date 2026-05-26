@@ -46,6 +46,18 @@ pi:
   #     }
   #   }
 
+# Automatic issue classification on creation.
+# When a new issue is opened, an LLM analyzes it to determine if it can be
+# solved by the agent (simple) or needs human intervention (complex).
+classifier:
+  # enabled: true             # Enable automatic triage of new issues
+  # provider: openai           # LLM provider (falls back to pi.default_provider)
+  # model: gpt-4o-mini         # Model for classification (falls back to pi.default_model)
+  # base_url: ""               # Optional custom API base URL
+  # api_key: ""                # API key (falls back to pi auth for the provider)
+  # human_assistance_label: "needs-human-assistance"  # Label for complex issues
+  # auto_assign: true          # Auto-assign simple issues to the bot user
+
 # Per-repository configuration overrides.
 # Key = owner/repo (exact match against the webhook payload).
 repos:

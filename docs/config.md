@@ -178,6 +178,63 @@ docker build -f Dockerfile.worker -t agent-worker .
 ./agent queue              # List queue status
 ```
 
+## `classifier`
+
+Optional automatic issue triage. When enabled, every new `issues: opened` event
+is analyzed by an LLM to decide whether the pi agent can handle it or it needs
+human intervention.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable automatic triage of new issues |
+| `provider` | string | falls back to `pi.settings.default_provider` | LLM provider id (e.g. `openai`, `anthropic`) |
+| `model` | string | falls back to `pi.settings.default_model` | Model name for classification |
+| `base_url` | string | auto-detected from provider | API base URL (falls back to known URLs for well-known providers) |
+| `api_key` | string | falls back to `pi.auth` | API key for the provider |
+| `human_assistance_label` | string | `needs-human-assistance` | Label applied to complex issues |
+| `auto_assign` | bool | `true` | Auto-assign simple issues to the bot user |
+
+**Known provider base URLs** (used when `base_url` is empty):
+`openai`, `anthropic`, `google`, `groq`, `deepseek`, `mistral`, `xai`, `opencode`.
+
+**Example:**
+
+```yaml
+classifier:
+  enabled: true
+  provider: anthropic
+  model: claude-haiku-4-20250514
+  human_assistance_label: "needs-human-assistance"
+  auto_assign: true
+```
+
+### How it works
+
+```
+issues: opened webhook
+        │
+ classifier enabled? ──No──▶ (skip, normal behavior)
+        │
+       Yes
+        │
+   LLM classifies issue
+        │
+   ┌────┴────┐
+ Simple    Complex
+   │         │
+   ▼         ▼
+Assign to  Add label
+bot user   (no assignment)
+   │
+   ▼
+issues: assigned webhook
+   → main agent picks it up
+```
+
+Classification is **best-effort**: if the LLM call fails, the webhook falls
+through to normal behavior (the issue is left untouched until a human assigns
+it or mentions `@agent`).
+
 ## Environment variables
 
 | Variable | Description |

@@ -18,6 +18,7 @@ opens a pull request — fully automated.
 ```
 cmd/agent/main.go              # CLI entrypoint (cobra), serve command, webhook handler
 internal/
+  classifier/classifier.go   # Issue classification LLM client (auto-triage)
   config/config.go            # YAML config loading, defaults
   github/client.go            # GitHub REST API client (JWT, installation tokens, comments, PRs)
   preview/preview.go          # Preview container lifecycle (create, stop, start, restart, destroy, list)
@@ -45,6 +46,9 @@ GitHub webhook (issue/comment)
         ▼
 agent serve (Go, :9423)
  ├── HMAC verification (X-Hub-Signature-256)
+ ├── Issue classifier (optional LLM triage on opened issues)
+ │    ├── Simple → auto-assign to bot, triggers worker
+ │    └── Complex → add "needs-human-assistance" label
  ├── @mention detection (regex built from configured bot user, default @agent)
  ├── Queue (FIFO, in-memory, max N concurrent)
  ├── Worker manager
@@ -74,6 +78,8 @@ agent serve (Go, :9423)
 - **Identity**: GitHub App (JWT → installation token), NOT personal access tokens.
 - **Isolation**: One Docker container per job, destroyed when done.
 - **Trigger**: Assignment to the configured bot user, or @mention — never acts on its own.
+- **Auto-triage** (optional): LLM classifier analyzes new issues on creation — simple
+  ones are auto-assigned to the bot, complex ones get a triage label.
 - **Continuation**: Commenting `@agent` on an existing PR triggers
   continuation mode (checks out the PR branch, applies feedback).
 - **Deduplication**: If a job ID is already active, Agent posts an
@@ -126,9 +132,11 @@ for the full schema. Key sections:
 
 | Section | Key fields |
 |---------|------------|
-| github  | `app_id`, `installation_id`, `private_key_file`, `webhook_secret` |
+| github  | `app_id`, `installation_id`, `private_key_file`, `webhook_secret`, `bot_user`, `bot_token` |
+| gitea   | `base_url`, `token`, `webhook_secret`, `bot_user`, `bot_token` |
 | queue   | `type` (only "memory" is implemented) |
-| pi      | `settings` (provider, model, thinking level, skills), `models` (raw JSON) |
+| pi      | `settings` (provider, model, thinking level, skills), `models` (raw JSON), `auth` |
+| classifier | `enabled`, `provider`, `model`, `base_url`, `api_key`, `human_assistance_label`, `auto_assign` |
 | repos   | per-repo `env`, `nixpacks`, `preview` (type, dockerfile_path, docker_compose_file, port, build_args) |
 | Top-level | `listen_addr`, `webhook_path`, `max_workers`, `preview_dir`, `base_url` |
 

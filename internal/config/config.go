@@ -16,11 +16,12 @@ type Config struct {
 	PreviewDir  string `yaml:"preview_dir"`
 	BaseURL     string `yaml:"base_url"`
 
-	GitHub GitHubConfig           `yaml:"github"`
-	Gitea  GiteaConfig            `yaml:"gitea"`
-	Queue  QueueConfig            `yaml:"queue"`
-	Pi     PiConfig               `yaml:"pi"`
-	Repos  map[string]RepoConfig  `yaml:"repos"` // key = owner/repo
+	GitHub     GitHubConfig           `yaml:"github"`
+	Gitea      GiteaConfig            `yaml:"gitea"`
+	Queue      QueueConfig            `yaml:"queue"`
+	Pi         PiConfig               `yaml:"pi"`
+	Classifier ClassifierConfig       `yaml:"classifier"`
+	Repos      map[string]RepoConfig  `yaml:"repos"` // key = owner/repo
 }
 
 // GitHubConfig holds GitHub App credentials.
@@ -50,6 +51,37 @@ type GiteaConfig struct {
 	// BotToken is a PAT for the bot user (for actions like self-assignment).
 	// If empty, the main Token is used.
 	BotToken string `yaml:"bot_token"`
+}
+
+// ClassifierConfig holds the issue classifier configuration.
+type ClassifierConfig struct {
+	// Enabled controls whether new issues are automatically classified
+	// and routed to the bot or flagged for human assistance.
+	Enabled bool `yaml:"enabled"`
+
+	// Provider is the OpenAI-compatible API provider for classification.
+	// Falls back to the pi default provider if empty.
+	Provider string `yaml:"provider"`
+
+	// Model is the model name for classification.
+	// Falls back to the pi default model if empty.
+	Model string `yaml:"model"`
+
+	// BaseURL is an optional custom API base URL (e.g., http://localhost:8080/v1).
+	// Falls back to the pi provider's base URL if not set.
+	BaseURL string `yaml:"base_url"`
+
+	// APIKey is the API key for the classification provider.
+	// Falls back to the pi auth if empty.
+	APIKey string `yaml:"api_key"`
+
+	// HumanAssistanceLabel is the label to apply when an issue is classified as
+	// complex and needs human intervention. Defaults to "needs-human-assistance".
+	HumanAssistanceLabel string `yaml:"human_assistance_label"`
+
+	// AutoAssign controls whether resolvable (simple) issues are automatically
+	// assigned to the configured bot user. Defaults to true when classifier is enabled.
+	AutoAssign bool `yaml:"auto_assign"`
 }
 
 // QueueConfig holds queue settings.

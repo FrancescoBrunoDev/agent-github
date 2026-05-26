@@ -7,9 +7,6 @@ explicitly mentions the bot (configured user, defaults to `@agent`) in an issue 
 
 - **Identity**: The service is a **GitHub App**, installed on target repos/orgs. It authenticates
   via GitHub App tokens, not personal access tokens.
-- **Event source**: GitHub webhooks deliver `issues.opened`, `issues.edited`, and
-  `issue_comment.created` events. The service filters to only react when the bot is
-  explicitly mentioned (`@agent`).
 - **Runtime**: The service itself runs inside a Docker container (written in **Go**).
   When triggered, it spawns a sibling Docker container for each accepted issue (via Docker
   socket mounting). Worker containers use Node.js (pi agent's runtime).
@@ -17,11 +14,18 @@ explicitly mentions the bot (configured user, defaults to `@agent`) in an issue 
   a queue.
 - **CLI / TUI**: The entire system is controllable via a CLI (and optionally a TUI) —
   queue management, container status, configuration, etc.
+- **Event source**: GitHub webhooks deliver `issues.opened`, `issues.edited`, and
+  `issue_comment.created` events. The service filters to only react when the bot is
+  explicitly mentioned (`@agent`). When the optional classifier is enabled, `issues.opened`
+  events are first analyzed by an LLM to auto-triage: simple issues get assigned to the bot,
+  complex ones get a triage label.
 - **Preview containers**: PR branches are automatically built into containerized previews
   via Nixpacks and served through a reverse proxy. A full REST API allows manual lifecycle
   management (create, stop, start, restart, destroy, list).
 
 ## Workflow
+
+### Primary trigger (explicit invocation)
 
 1. **A user mentions the bot** in an issue or comment (e.g. `@agent fix this`).
 2. **GitHub delivers a webhook** (`issues.opened`, `issues.edited`, or `issue_comment.created`)
@@ -30,6 +34,23 @@ explicitly mentions the bot (configured user, defaults to `@agent`) in an issue 
    a. If yes → accept the job (queue if at capacity).
    b. If no → ignore the event.
 4. **When capacity allows, the service spawns a sibling Docker container** that:
+
+### Automatic triage (optional, classifier.enabled: true)
+
+1. **A user opens a new issue** in the repository.
+2. **GitHub delivers a webhook** (`issues.opened`) to the service.
+3. **The classifier** (if enabled and the issue isn't already assigned/mentioned):
+   a. Calls an LLM with a classification prompt (title + body).
+   b. If classified as "simple" → auto-assigns to the bot user, which triggers the main
+      agent workflow via `issues: assigned`.
+   c. If classified as "complex" → adds a configurable label (default:
+      `needs-human-assistance`) and takes no further action.
+   d. If classification fails → the webhook falls through to normal behavior
+      (the issue is left untouched).
+
+### Worker execution (shared)
+
+1. **The worker container**:
    a. Is a Linux-based image with `git`, `gh` (GitHub CLI), Chrome, `agent-browser`,
       and the pi agent pre-installed.
    b. Clones the target repository.
@@ -80,6 +101,7 @@ Two layers:
 | Control interface | **CLI + optional TUI** | Scriptable, inspectable, human-friendly overview. |
 | Agent | **pi agent** | Already selected. |
 | Service language | **Go** | Single binary, native Docker SDK (same codebase), goroutines for concurrency. |
+| Issue triage | **LLM classifier** | New issues are auto-classified: simple issues get assigned to the bot, complex ones get a `needs-human-assistance` label. |
 
 ## Runtime contract (happy path)
 
