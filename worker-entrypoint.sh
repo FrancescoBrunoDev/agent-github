@@ -326,14 +326,19 @@ echo "==> Building containerized preview..."
 PREVIEW_CONTAINER="agent-preview-${REPO_NAME}"
 docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
 
-# Get PR URL (platform-aware)
+# Get PR URL and number (platform-aware)
 if [ "$PLATFORM" = "gitea" ]; then
-    PR_URL="${GITEA_BASE}/${REPO_OWNER}/${REPO_NAME}/pulls/$(tea pr list --repo "${REPO_OWNER}/${REPO_NAME}" --head "${BRANCH}" --output json 2>/dev/null | jq -r '.[0].number' 2>/dev/null || echo "")"
+    PR_NUMBER=$(tea pr list --repo "${REPO_OWNER}/${REPO_NAME}" --head "${BRANCH}" --output json 2>/dev/null | jq -r '.[0].number' 2>/dev/null || echo "")
+    if [ -n "$PR_NUMBER" ]; then
+        PR_URL="${GITEA_BASE}/${REPO_OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}"
+    fi
 else
     PR_URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
+    if [ -n "$PR_URL" ]; then
+        PR_NUMBER=$(echo "$PR_URL" | grep -oP '/pull/\K[0-9]+' || echo "")
+    fi
 fi
-if [ -n "$PR_URL" ]; then
-    PR_NUMBER=$(echo "$PR_URL" | grep -oP '/pull/\K[0-9]+' || echo "")
+if [ -n "$PR_NUMBER" ]; then
     if [ -n "$PR_NUMBER" ]; then
         PREVIEW_IMAGE="agent-preview-${REPO_NAME,,}-${PR_NUMBER}"
         PREVIEW_CONTAINER="${PREVIEW_IMAGE}"
