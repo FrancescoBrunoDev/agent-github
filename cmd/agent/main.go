@@ -643,7 +643,13 @@ func injectBaseTag(resp *http.Response, prefix string) {
 
 	prefixSlash := prefix + "/"
 
-	// Rewrite absolute paths in attributes FIRST (skip protocol-relative //)
+	// FIRST: rewrite bare /_next/ paths used by Next.js runtime and JSON payloads.
+	// These aren't caught by HTML attribute rewriting (they're in <script> code).
+	body = bytes.ReplaceAll(body, []byte("\"/_next/"), []byte("\""+prefixSlash+"_next/"))
+	body = bytes.ReplaceAll(body, []byte("'/_next/"), []byte("'"+prefixSlash+"_next/"))
+	body = bytes.ReplaceAll(body, []byte("/_next/"), []byte(prefixSlash+"_next/"))
+
+	// THEN rewrite remaining absolute paths in attributes (skip protocol-relative //)
 	body = rewriteHTMLAttr(body, "src=\"", "/", prefixSlash)
 	body = rewriteHTMLAttr(body, "src='", "/", prefixSlash)
 	body = rewriteHTMLAttr(body, "href=\"", "/", prefixSlash)
@@ -673,10 +679,10 @@ func rewriteCSS(resp *http.Response, prefix string) {
 
 	prefixSlash := prefix + "/"
 
-	// Handle url("/..."), url('/...'), url(/...)
-	body = rewriteHTMLAttr(body, "url(\"", "/", prefixSlash)
-	body = rewriteHTMLAttr(body, "url('", "/", prefixSlash)
-	body = rewriteHTMLAttr(body, "url(", "/", prefixSlash)
+	// FIRST: rewrite /_next/ in CSS (e.g. @font-face src)
+	body = bytes.ReplaceAll(body, []byte("/_next/"), []byte(prefixSlash+"_next/"))
+
+	// THEN handle url("/..."), url('/...'), url(/...)
 
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	resp.ContentLength = -1
