@@ -644,6 +644,24 @@ func (m *Manager) List() ([]ContainerInfo, error) {
 	return results, nil
 }
 
+// Shutdown stops all running preview containers. Called on service shutdown.
+func (m *Manager) Shutdown() {
+	out, err := exec.Command("docker", "ps", "-q",
+		"--filter", "name=agent-preview-",
+	).Output()
+	if err != nil {
+		return
+	}
+
+	for _, id := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if id == "" {
+			continue
+		}
+		log.Printf("preview: stopping container %s", id)
+		exec.Command("docker", "stop", id).Run()
+	}
+}
+
 // ---- Helpers ----
 
 func containerNameFor(repo string, pr int) string {
