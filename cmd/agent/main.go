@@ -63,7 +63,7 @@ func serveCmd() *cobra.Command {
 			}
 			q := queue.New(wm)
 
-			previewMgr := preview.NewManager(cfg.PreviewDir, cfg.BaseURL)
+			previewMgr := preview.NewManager(cfg.PreviewDir, cfg.BaseURL, cfg.PreviewDomain)
 
 			if cfg.Pi.Settings != nil {
 				os.Setenv("AGENT_PI_SETTINGS", cfg.Pi.Settings.SettingsJSON())
@@ -77,6 +77,9 @@ func serveCmd() *cobra.Command {
 			os.Setenv("AGENT_BASE_URL", cfg.BaseURL)
 			os.Setenv("AGENT_MEDIA_DIR", cfg.MediaDir)
 			os.Setenv("AGENT_PREVIEW_DIR", cfg.PreviewDir)
+		if cfg.PreviewDomain != "" {
+			os.Setenv("AGENT_PREVIEW_DOMAIN", cfg.PreviewDomain)
+		}
 			if cfg.GitHub.BotUser != "" {
 				os.Setenv("AGENT_BOT_USER", cfg.GitHub.BotUser)
 			}
@@ -161,7 +164,13 @@ func serveCmd() *cobra.Command {
 			// Reconcile existing preview containers on startup
 			reconcilePreviews(cfg.PreviewDir)
 
-			srv := &http.Server{Addr: cfg.ListenAddr, Handler: mux}
+			// Wrap with subdomain preview handler if preview domain is configured
+		var handler http.Handler = mux
+		if cfg.PreviewDomain != "" {
+			handler = previewSubdomainHandler(mux, cfg.PreviewDomain, cfg.PreviewDir)
+		}
+
+		srv := &http.Server{Addr: cfg.ListenAddr, Handler: handler}
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -717,6 +726,68 @@ func rewriteHTMLAttr(body []byte, attr, slash, prefix string) []byte {
 }
 
 // ---- Reconcile & preview proxy ----
+
+// previewSubdomainHandler routes requests based on subdomain to preview containers.
+// Subdomain format: pr{N}-{safe-owner}-{safe-repo}.{domain}
+// Example: pr16-dinginess-test-agent.francesco-bruno.com
+func previewSubdomainHandler(fallback http.Handler, domain, previewDir string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.ToLower(r.Host)
+		// Strip port if present
+		if idx := strings.Index(host, ":"); idx >= 0 {
+			host = host[:idx]
+		}
+
+		// Check if host matches {subdomain}.{domain}
+		suffix := "." + strings.ToLower(domain)
+		if !strings.HasSuffix(host, suffix) {
+			fallback.ServeHTTP(w, r)
+			return
+		}
+
+		subdomain := strings.TrimSuffix(host, suffix)
+		// Parse: pr{N}-{safe-repo}
+		if !strings.HasPrefix(subdomain, "pr") {
+			fallback.ServeHTTP(w, r)
+			return
+		}
+
+		// Extract PR number: everything after "pr" until the next dash
+		rest := subdomain[2:] // remove "pr"
+		dashIdx := strings.Index(rest, "-")
+		if dashIdx < 0 {
+			fallback.ServeHTTP(w, r)
+			return
+		}
+		prStr := rest[:dashIdx]
+		safeRepo := rest[dashIdx+1:]
+
+		pr, err := strconv.Atoi(prStr)
+		if err != nil || safeRepo == "" {
+			fallback.ServeHTTP(w, r)
+			return
+		}
+
+		// Look up port file: previewDir/{safeRepo}-{pr}.port
+		portFile := filepath.Join(previewDir, safeRepo+"-"+strconv.Itoa(pr)+".port")
+		portBytes, err := os.ReadFile(portFile)
+		if err != nil {
+			// Check static fallback
+			staticDir := filepath.Join(previewDir, safeRepo, strconv.Itoa(pr))
+			if _, err := os.Stat(staticDir); err == nil {
+				http.FileServer(http.Dir(staticDir)).ServeHTTP(w, r)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+
+		port := strings.TrimSpace(string(portBytes))
+		target, _ := url.Parse("http://localhost:" + port)
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.ServeHTTP(w, r)
+	})
+}
 
 func reconcilePreviews(previewDir string) {
 	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=agent-preview-",

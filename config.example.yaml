@@ -4,6 +4,7 @@ webhook_path: "/webhook"
 max_workers: 5
 media_dir: "./media"
 preview_dir: "./preview"
+# preview_domain: "francesco-bruno.com"  # Enables subdomain-based previews
 base_url: "https://agent.francesco-bruno.com"
 
 github:

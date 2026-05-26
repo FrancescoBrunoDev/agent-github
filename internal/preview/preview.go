@@ -60,16 +60,18 @@ type CreateRequest struct {
 
 // Manager handles preview container lifecycle operations.
 type Manager struct {
-	previewDir string
-	baseURL    string
-	mu         sync.Mutex
+	previewDir    string
+	baseURL       string
+	previewDomain string
+	mu            sync.Mutex
 }
 
 // NewManager creates a new preview Manager.
-func NewManager(previewDir, baseURL string) *Manager {
+func NewManager(previewDir, baseURL, previewDomain string) *Manager {
 	return &Manager{
-		previewDir: previewDir,
-		baseURL:    baseURL,
+		previewDir:    previewDir,
+		baseURL:       baseURL,
+		previewDomain: previewDomain,
 	}
 }
 
@@ -742,21 +744,17 @@ func (m *Manager) waitForPort(containerName string, timeout time.Duration) int {
 }
 
 func (m *Manager) previewURL(repo string, pr int) string {
-	// repo is "owner/repo" format; extract parts for the URL
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) == 2 {
-		return fmt.Sprintf("%s/preview/github/%s/%s/%d/", m.baseURL, parts[0], parts[1], pr)
+	if m.previewDomain != "" {
+		safe := strings.ReplaceAll(repo, "/", "-")
+		return fmt.Sprintf("https://pr%d-%s.%s", pr, safe, m.previewDomain)
 	}
 	return fmt.Sprintf("%s/preview/github/%s/%d/", m.baseURL, repo, pr)
 }
 
-// PreviewURLForPlatform builds a preview URL for a specific forge platform.
-func (m *Manager) PreviewURLForPlatform(platform, repo string, pr int) string {
-	parts := strings.SplitN(repo, "/", 2)
-	if len(parts) == 2 {
-		return fmt.Sprintf("%s/preview/%s/%s/%s/%d/", m.baseURL, platform, parts[0], parts[1], pr)
-	}
-	return fmt.Sprintf("%s/preview/%s/%s/%d/", m.baseURL, platform, repo, pr)
+// SubdomainURL builds a subdomain-based preview URL (public helper).
+func (m *Manager) SubdomainURL(domain, repo string, pr int) string {
+	safe := strings.ReplaceAll(repo, "/", "-")
+	return fmt.Sprintf("https://pr%d-%s.%s", pr, safe, domain)
 }
 
 func parseContainerName(name string) (repo string, pr int) {

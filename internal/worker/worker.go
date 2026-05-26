@@ -161,6 +161,7 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		"-e", "AGENT_GITEA_BOT_USER=" + envOrEmpty("AGENT_GITEA_BOT_USER"),
 		"-e", "AGENT_GITEA_BOT_TOKEN=" + envOrEmpty("AGENT_GITEA_BOT_TOKEN"),
 		"-e", "AGENT_GITEA_BASE_URL=" + envOrEmpty("AGENT_GITEA_BASE_URL"),
+		"-e", "AGENT_PREVIEW_DOMAIN=" + envOrEmpty("AGENT_PREVIEW_DOMAIN"),
 		"-e", "AGENT_NIXPACKS_INSTALL_CMD=" + job.NixpacksInstallCmd,
 		"-e", "AGENT_NIXPACKS_BUILD_CMD=" + job.NixpacksBuildCmd,
 		"-e", "AGENT_NIXPACKS_START_CMD=" + job.NixpacksStartCmd,

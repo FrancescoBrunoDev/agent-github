@@ -15,6 +15,9 @@ type Config struct {
 	MediaDir    string `yaml:"media_dir"`
 	PreviewDir  string `yaml:"preview_dir"`
 	BaseURL     string `yaml:"base_url"`
+	// PreviewDomain enables subdomain-based preview routing.
+	// E.g. "francesco-bruno.com" serves previews at pr42-owner-repo.francesco-bruno.com
+	PreviewDomain string `yaml:"preview_domain"`
 
 	GitHub     GitHubConfig           `yaml:"github"`
 	Gitea      GiteaConfig            `yaml:"gitea"`

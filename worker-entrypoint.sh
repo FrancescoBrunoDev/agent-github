@@ -17,6 +17,14 @@ REPO_OWNER=$(echo "${REPO_URL}" | sed -n 's|https://[^/]*/\([^/]*\)/.*|\1|p')
 REPO_NAME=$(echo "${REPO_URL}" | sed -n 's|https://[^/]*/[^/]*/\([^.]*\)\(.git\)\?$|\1|p')
 FULL_REPO="${REPO_OWNER}/${REPO_NAME}"
 
+# Build preview URL: subdomain if AGENT_PREVIEW_DOMAIN is set, else path-based
+if [ -n "${AGENT_PREVIEW_DOMAIN:-}" ]; then
+    SAFE_FULL="$(echo "${REPO_OWNER}-${REPO_NAME}" | tr '/' '-')"
+    PREVIEW_URL="https://pr${ISSUE_NUMBER}-${SAFE_FULL}.${AGENT_PREVIEW_DOMAIN}"
+else
+    PREVIEW_URL="${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${ISSUE_NUMBER}/"
+fi
+
 # ---- Set up pi agent configuration ----
 mkdir -p ~/.pi/agent
 
@@ -343,6 +351,12 @@ else
 fi
 if [ -n "$PR_NUMBER" ]; then
     if [ -n "$PR_NUMBER" ]; then
+        if [ -n "${AGENT_PREVIEW_DOMAIN:-}" ]; then
+            SAFE_FULL="$(echo "${REPO_OWNER}-${REPO_NAME}" | tr '/' '-')"
+            PR_PREVIEW_URL="https://pr${PR_NUMBER}-${SAFE_FULL}.${AGENT_PREVIEW_DOMAIN}"
+        else
+            PR_PREVIEW_URL="${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/"
+        fi
         PREVIEW_IMAGE="agent-preview-${FULL_REPO,,}-${PR_NUMBER}"
         PREVIEW_CONTAINER="${PREVIEW_IMAGE}"
 
@@ -377,7 +391,7 @@ if [ -n "$PR_NUMBER" ]; then
                     mkdir -p /agent-preview
                     echo "$PORT" > "/agent-preview/${FULL_REPO}-${PR_NUMBER}.port"
                     echo "==> Preview running on port ${PORT}"
-                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
                 else
                     echo "==> WARNING: could not determine preview port"
                     docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -424,7 +438,7 @@ DOCKERFILE
                             mkdir -p /agent-preview
                             echo "$PORT" > "/agent-preview/${FULL_REPO}-${PR_NUMBER}.port"
                             echo "==> Static preview running on port ${PORT}"
-                            post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                            post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
                             PREVIEW_BUILT=true
                         else
                             docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -441,7 +455,7 @@ DOCKERFILE
                 if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
                     mkdir -p "/agent-preview/${FULL_REPO}/${PR_NUMBER}"
                     cp -r /workspace/preview/* "/agent-preview/${FULL_REPO}/${PR_NUMBER}/" 2>&1
-                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
                     PREVIEW_BUILT=true
                 fi
             fi
@@ -452,7 +466,7 @@ DOCKERFILE
             fi
 
             # Comment preview link on the PR
-            PREVIEW_LINK="${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/"
+            PREVIEW_LINK="${PR_PREVIEW_URL}"
             if [ "$PREVIEW_BUILT" = true ]; then
                 pr_comment "${PR_NUMBER}" "🌐 **Preview:** ${PREVIEW_LINK}" 2>&1 || true
             fi
