@@ -59,6 +59,10 @@ type RepoConfig struct {
 
 	// Nixpacks overrides for containerized preview builds.
 	Nixpacks *NixpacksConfig `yaml:"nixpacks"`
+
+	// Preview controls how project previews are built and served.
+	// If omitted, defaults to Nixpacks auto-detection.
+	Preview *PreviewConfig `yaml:"preview"`
 }
 
 // NixpacksConfig overrides auto-detection when building preview containers.
@@ -66,6 +70,27 @@ type NixpacksConfig struct {
 	InstallCmd string `yaml:"install_cmd"`
 	BuildCmd   string `yaml:"build_cmd"`
 	StartCmd   string `yaml:"start_cmd"`
+}
+
+// PreviewConfig controls how the preview container is built.
+type PreviewConfig struct {
+	// Type is the build method: "nixpacks" (default), "dockerfile", or "docker-compose".
+	Type string `yaml:"type"`
+
+	// DockerfilePath is the path to the Dockerfile (default: "Dockerfile").
+	DockerfilePath string `yaml:"dockerfile_path"`
+
+	// DockerComposeFile is the path to the docker-compose file (default: "docker-compose.yml").
+	DockerComposeFile string `yaml:"docker_compose_file"`
+
+	// DockerComposeService is the service name to expose (default: first service with ports).
+	DockerComposeService string `yaml:"docker_compose_service"`
+
+	// BuildArgs are passed to docker build --build-arg.
+	BuildArgs map[string]string `yaml:"build_args"`
+
+	// Port is the internal container port to expose (default: auto-detect 3000/8080/80).
+	Port int `yaml:"port"`
 }
 
 // PiSettings holds the most common pi agent settings.

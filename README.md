@@ -42,6 +42,8 @@ Assign issue to @agent-bot
 - **Screenshots**: agent-browser artifacts are committed to the PR branch
 - **FIFO queue** with configurable concurrency
 - **Deduplication**: won't double-process the same issue/PR
+- **Preview containers**: automatic Nixpacks builds with REST API lifecycle management (create/stop/start/restart/destroy)
+- **Reverse proxy**: `/preview/{repo}/{pr}/` → running container or static fallback
 
 ## Requirements
 
@@ -69,3 +71,29 @@ $EDITOR config.yaml   # fill in GitHub App credentials
 
 - [Setup: creating a GitHub App](docs/setup.md)
 - [Configuration reference](docs/config.md)
+
+## Preview API
+
+Previews are containerized builds of PR branches, served at `/preview/{repo}/{pr}/`.
+Manage them via REST API:
+
+```bash
+# List all previews
+curl http://localhost:9423/api/previews
+
+# Create preview for PR #42
+curl -X POST http://localhost:9423/api/preview/owner/repo/42 \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/owner/repo.git"}'
+
+# Check status
+curl http://localhost:9423/api/preview/owner/repo/42
+
+# Stop / start / restart
+curl -X POST http://localhost:9423/api/preview/owner/repo/42/stop
+curl -X POST http://localhost:9423/api/preview/owner/repo/42/start
+curl -X POST http://localhost:9423/api/preview/owner/repo/42/restart
+
+# Destroy
+curl -X DELETE http://localhost:9423/api/preview/owner/repo/42
+```

@@ -46,3 +46,17 @@ repos:
   #     install_cmd: "pip install -r requirements.txt"
   #     build_cmd: "npm run build"
   #     start_cmd: "python app.py"
+  #
+  #   # Preview build method (defaults to nixpacks auto-detection):
+  #   preview:
+  #     type: dockerfile             # "nixpacks", "dockerfile", or "docker-compose"
+  #     dockerfile_path: Dockerfile  # path relative to repo root
+  #     port: 3000                   # internal container port (default: auto-detect)
+  #     build_args:                  # --build-arg passed to docker build
+  #       NODE_ENV: production
+  #
+  #   # Or with Docker Compose:
+  #   preview:
+  #     type: docker-compose
+  #     docker_compose_file: docker-compose.yml
+  #     docker_compose_service: web  # service to expose (default: first with ports)

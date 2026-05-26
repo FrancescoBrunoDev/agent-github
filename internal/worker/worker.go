@@ -38,6 +38,14 @@ type Job struct {
 	NixpacksInstallCmd string
 	NixpacksBuildCmd   string
 	NixpacksStartCmd   string
+
+	// Preview build method (from repo config).
+	PreviewType              string
+	PreviewDockerfilePath    string
+	PreviewComposeFile       string
+	PreviewComposeService    string
+	PreviewPort              int
+	PreviewBuildArgs         map[string]string
 }
 
 // Status is the current state of a job.
@@ -148,6 +156,11 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		"-e", "AGENT_NIXPACKS_INSTALL_CMD=" + job.NixpacksInstallCmd,
 		"-e", "AGENT_NIXPACKS_BUILD_CMD=" + job.NixpacksBuildCmd,
 		"-e", "AGENT_NIXPACKS_START_CMD=" + job.NixpacksStartCmd,
+		"-e", "AGENT_PREVIEW_TYPE=" + job.PreviewType,
+		"-e", "AGENT_PREVIEW_DOCKERFILE=" + job.PreviewDockerfilePath,
+		"-e", "AGENT_PREVIEW_COMPOSE_FILE=" + job.PreviewComposeFile,
+		"-e", "AGENT_PREVIEW_COMPOSE_SERVICE=" + job.PreviewComposeService,
+		"-e", fmt.Sprintf("AGENT_PREVIEW_PORT=%d", job.PreviewPort),
 		"-v", "/var/run/docker.sock:/var/run/docker.sock",
 		"-v", mediaDir + ":/agent-media",
 		"-v", previewDir + ":/agent-preview",
@@ -158,6 +171,11 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 	// Inject per-repo environment variables
 	for k, v := range job.EnvVars {
 		args = append(args, "-e", k+"="+v)
+	}
+
+	// Inject preview build args
+	for k, v := range job.PreviewBuildArgs {
+		args = append(args, "-e", "PREVIEW_BUILD_ARG_"+k+"="+v)
 	}
 
 	cmd := exec.CommandContext(ctx, "docker", args...)

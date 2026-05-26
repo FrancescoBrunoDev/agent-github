@@ -20,6 +20,7 @@ cmd/agent/main.go              # CLI entrypoint (cobra), serve command, webhook 
 internal/
   config/config.go            # YAML config loading, defaults
   github/client.go            # GitHub REST API client (JWT, installation tokens, comments, PRs)
+  preview/preview.go          # Preview container lifecycle (create, stop, start, restart, destroy, list)
   queue/queue.go              # FIFO in-memory job queue with configurable concurrency
   webhook/webhook.go          # Webhook payload parsing, HMAC-SHA256 signature verification,
                               #   @mention regex matching
@@ -46,10 +47,19 @@ agent serve (Go, :9423)
  ├── HMAC verification (X-Hub-Signature-256)
  ├── @mention detection (regex built from configured bot user, default @agent)
  ├── Queue (FIFO, in-memory, max N concurrent)
- └── Worker manager
-      │
-      ▼
-docker run agent-worker:latest
+ ├── Worker manager
+ │    │
+ │    ▼
+ │  docker run agent-worker:latest
+ ├── Preview manager (REST API)
+ │    ├── POST   /api/preview/{repo}/{pr}       — build & start preview container
+ │    ├── GET    /api/preview/{repo}/{pr}       — get status
+ │    ├── DELETE /api/preview/{repo}/{pr}       — destroy container
+ │    ├── POST   /api/preview/{repo}/{pr}/stop   — stop
+ │    ├── POST   /api/preview/{repo}/{pr}/start  — start
+ │    ├── POST   /api/preview/{repo}/{pr}/restart — restart
+ │    └── GET    /api/previews                  — list all
+ └── Reverse proxy: /preview/{repo}/{pr}/ → container port (or static files)
  ├── gh auth (installation token)
  ├── git clone <repo>
  ├── mise / devcontainer setup (if .devcontainer/ exists)
@@ -119,7 +129,8 @@ for the full schema. Key sections:
 | github  | `app_id`, `installation_id`, `private_key_file`, `webhook_secret` |
 | queue   | `type` (only "memory" is implemented) |
 | pi      | `settings` (provider, model, thinking level, skills), `models` (raw JSON) |
-| Top-level | `listen_addr`, `webhook_path`, `max_workers` |
+| repos   | per-repo `env`, `nixpacks`, `preview` (type, dockerfile_path, docker_compose_file, port, build_args) |
+| Top-level | `listen_addr`, `webhook_path`, `max_workers`, `preview_dir`, `base_url` |
 
 Pi settings and models are written to `~/.pi/agent/settings.json` and
 `~/.pi/agent/models.json` inside each worker container before pi runs.
@@ -188,6 +199,94 @@ The generated prompt includes:
 - Branch/push/PR commands appropriate for the mode (new vs continuation)
 - Summary comment template
 
+## Preview containers (DevPreview)
+
+Workers automatically build and deploy containerized previews of PR branches
+using Nixpacks (with nginx and static-file fallbacks). Previews are served via
+reverse proxy at `/preview/{repo}/{pr}/` and managed through a REST API.
+
+### How previews are built
+
+1. Worker or API triggers a one-shot build container (`agent-worker` image).
+2. Build container clones the repo, checks out the PR branch.
+3. If `.devcontainer/devcontainer.json` exists, Node.js version is installed via mise.
+4. Nixpacks builds a Docker image and starts the container on a random port.
+5. Port mapping is written to `{previewDir}/{repo}-{pr}.port`.
+6. Reverse proxy reads the port file and forwards traffic.
+
+### Build fallback chain
+
+| Priority | Method | Requirements |
+|----------|--------|--------------|
+| 0 | Dockerfile / Docker Compose | If `preview.type` is set in config |
+| 1 | Nixpacks (auto-detect) | `package.json` with `start` script, or overrides |
+| 2 | Nginx static serve | `dist/`, `build/`, `out/`, or `public/` directory |
+| 3 | File copy | `preview/` directory in repo root |
+
+### Configuring the build method
+
+Per-repo in `config.yaml`:
+
+```yaml
+repos:
+  "owner/repo-name":
+    preview:
+      type: dockerfile          # "nixpacks" (default), "dockerfile", "docker-compose"
+      dockerfile_path: Dockerfile.prod
+      port: 3000
+      build_args:
+        NODE_ENV: production
+
+  "owner/another-repo":
+    preview:
+      type: docker-compose
+      docker_compose_file: docker-compose.prod.yml
+      docker_compose_service: web
+```
+
+When `preview.type` is set to `dockerfile` or `docker-compose`, the build
+script skips Nixpacks entirely and uses the specified Docker setup.
+
+### Preview API
+
+All endpoints are under `/api/preview/{repo}/{pr}`. The `repo` is the full
+GitHub repo name (e.g. `owner/repo`).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/previews` | List all preview containers (running + static fallbacks) |
+| `GET` | `/api/preview/{repo}/{pr}` | Get container status, port, image, URL |
+| `POST` | `/api/preview/{repo}/{pr}` | Create/build preview (body: `CreateRequest` JSON) |
+| `DELETE` | `/api/preview/{repo}/{pr}` | Destroy container + port file + static files |
+| `POST` | `/api/preview/{repo}/{pr}/stop` | Stop container |
+| `POST` | `/api/preview/{repo}/{pr}/start` | Start stopped container (refreshes port) |
+| `POST` | `/api/preview/{repo}/{pr}/restart` | Restart container (refreshes port) |
+
+**Create request body** (`POST /api/preview/{repo}/{pr}`):
+```json
+{
+  "repo_url": "https://github.com/owner/repo.git",
+  "branch": "agent/issue-42",
+  "github_token": "ghs_...",
+  "install_cmd": "npm ci",
+  "build_cmd": "npm run build",
+  "start_cmd": "node server.js",
+  "env": { "NODE_ENV": "production" }
+}
+```
+
+All fields are optional. If `repo_url` is omitted, it defaults to
+`https://github.com/{repo}.git`. If `github_token` is omitted, the manager
+tries to generate an installation token via the GitHub App client. Per-repo
+nixpacks config from `config.yaml` (`repos.<name>.nixpacks`) is applied
+automatically.
+
+### Automatic cleanup
+
+When a PR is closed or merged, the `pull_request.closed` webhook triggers
+`preview.Manager.Destroy()` which removes the container, port file, and
+any static file directories.
+
 ### Screenshots
 
 After pi exits, the entrypoint finds image files in `/workspace/`, copies them
@@ -253,6 +352,8 @@ Actions accepted: `opened`, `edited`, `created`.
 - No timeout mechanism for worker containers (documented but not coded)
 - Worker `Start()` passes `nil` context from the queue (minor: should plumb a
   real context with timeout)
+- Preview auto-build on PR open (currently only manual API + worker builds)
+- Preview image cleanup/pruning (old images accumulate)
 
 ## Important: LLM configuration
 

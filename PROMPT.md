@@ -17,6 +17,9 @@ explicitly mentions the bot (configured user, defaults to `@agent`) in an issue 
   a queue.
 - **CLI / TUI**: The entire system is controllable via a CLI (and optionally a TUI) —
   queue management, container status, configuration, etc.
+- **Preview containers**: PR branches are automatically built into containerized previews
+  via Nixpacks and served through a reverse proxy. A full REST API allows manual lifecycle
+  management (create, stop, start, restart, destroy, list).
 
 ## Workflow
 
@@ -134,6 +137,48 @@ The app needs these scopes:
 Webhook subscriptions:
 - `issues` (opened, edited)
 - `issue_comment` (created)
+- `pull_request` (closed) — automatic preview cleanup
+
+## Preview containers
+
+When the worker finishes a PR, it builds a containerized preview using Nixpacks.
+The preview is served at `{base_url}/preview/{repo}/{pr}/` via a reverse proxy.
+
+### Build pipeline
+1. Worker clones the repo and checks out the PR branch.
+2. Devcontainer detected → Node.js installed via mise.
+3. **Nixpacks** auto-detects the project type and builds a Docker image.
+4. Container started on a random host port with `--restart unless-stopped`.
+5. Port written to `{previewDir}/{repo}-{pr}.port`.
+
+### Fallbacks
+If Nixpacks fails or the project has no start command:
+- **Nginx static**: serve `dist/`, `build/`, `out/`, or `public/` via nginx:alpine.
+- **File copy**: copy `preview/` directory to static file server.
+
+### REST API
+All endpoints under `/api/preview/{repo}/{pr}`:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/previews` | List all previews |
+| `GET` | `/api/preview/{repo}/{pr}` | Container status |
+| `POST` | `/api/preview/{repo}/{pr}` | Build & start preview |
+| `DELETE` | `/api/preview/{repo}/{pr}` | Stop & remove container |
+| `POST` | `/api/preview/{repo}/{pr}/stop` | Stop container |
+| `POST` | `/api/preview/{repo}/{pr}/start` | Start stopped container |
+| `POST` | `/api/preview/{repo}/{pr}/restart` | Restart container |
+
+Create accepts JSON body with optional `repo_url`, `branch`, `github_token`,
+`install_cmd`, `build_cmd`, `start_cmd`, and `env` map. Per-repo nixpacks
+config from `config.yaml` is applied automatically.
+
+### Lifecycle
+- **Created**: by worker after successful PR, or via REST API.
+- **Running**: served via reverse proxy. Survives service restart (reconciliation).
+- **Stopped**: via API or manual `docker stop`. Can be restarted.
+- **Destroyed**: on PR close (webhook), or via DELETE API. Removes container,
+  port file, and static files.
 
 ## Open questions (to resolve later)
 

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -12,12 +14,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/agent-github/agent/internal/config"
 	"github.com/agent-github/agent/internal/github"
+	"github.com/agent-github/agent/internal/preview"
 	"github.com/agent-github/agent/internal/queue"
 	"github.com/agent-github/agent/internal/webhook"
 	"github.com/agent-github/agent/internal/worker"
@@ -56,6 +60,8 @@ func serveCmd() *cobra.Command {
 			}
 			q := queue.New(wm)
 
+			previewMgr := preview.NewManager(cfg.PreviewDir, cfg.BaseURL)
+
 			if cfg.Pi.Settings != nil {
 				os.Setenv("AGENT_PI_SETTINGS", cfg.Pi.Settings.SettingsJSON())
 			}
@@ -84,7 +90,7 @@ func serveCmd() *cobra.Command {
 				}
 			}
 
-			h := &handler{cfg: cfg, queue: q, ghClient: ghClient}
+			h := &handler{cfg: cfg, queue: q, ghClient: ghClient, previewMgr: previewMgr}
 
 			mux := http.NewServeMux()
 			mux.HandleFunc(cfg.WebhookPath, h.handleWebhook)
@@ -100,6 +106,10 @@ func serveCmd() *cobra.Command {
 			// Serve project previews (containerized or static fallback)
 			os.MkdirAll(cfg.PreviewDir, 0755)
 			mux.Handle("/preview/", previewHandler(cfg.PreviewDir))
+
+			// Preview management API
+			mux.HandleFunc("/api/previews", h.handlePreviewsList)
+			mux.HandleFunc("/api/preview/", h.handlePreviewAPI)
 
 			// Reconcile existing preview containers on startup
 			reconcilePreviews(cfg.PreviewDir)
@@ -124,9 +134,10 @@ func serveCmd() *cobra.Command {
 }
 
 type handler struct {
-	cfg      *config.Config
-	queue    *queue.Queue
-	ghClient *github.Client
+	cfg        *config.Config
+	queue      *queue.Queue
+	ghClient   *github.Client
+	previewMgr *preview.Manager
 }
 
 func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -149,33 +160,11 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		log.Printf("webhook: PR closed event for %s/#%d", payload.Repo.FullName, payload.PullRequest.Number)
 		repoName := payload.Repo.Name
 		prNum := payload.PullRequest.Number
-		previewDir := os.Getenv("AGENT_PREVIEW_DIR")
-		if previewDir == "" {
-			previewDir = os.TempDir() + "/agent-preview"
-		}
-
-		// Use Docker to clean up root-owned files
-		dockerCleanup := func(paths ...string) {
-			for _, p := range paths {
-				exec.Command("docker", "run", "--rm",
-					"-v", previewDir+":/preview",
-					"alpine", "rm", "-rf", "/preview/"+p,
-				).Run()
-			}
-		}
-
-		// Stop and remove preview container
-		containerName := fmt.Sprintf("agent-preview-%s-%d", strings.ToLower(repoName), prNum)
-		if out, err := exec.Command("docker", "rm", "-f", containerName).CombinedOutput(); err != nil {
-			log.Printf("preview container cleanup failed for %s: %v\n%s", containerName, err, string(out))
+		if err := h.previewMgr.Destroy(repoName, prNum); err != nil {
+			log.Printf("preview destroy error: %v", err)
 		} else {
-			log.Printf("preview container removed: %s", containerName)
+			log.Printf("preview cleaned up: %s/#%d", repoName, prNum)
 		}
-
-		// Remove port file + static files (all root-owned)
-		prStr := fmt.Sprintf("%d", prNum)
-		dockerCleanup(repoName+"-"+prStr+".port", repoName+"/"+prStr)
-		log.Printf("preview cleaned up: %s/#%d", repoName, prNum)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"cleaned":"preview removed"}`))
 		return
@@ -195,12 +184,10 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if this is an assignment to our bot user (primary trigger)
 	botUser := os.Getenv("AGENT_BOT_USER")
 	assigned := botUser != "" && payload.IsAssignedTo(botUser)
 
 	if !assigned {
-		// Fallback: check for @mention of our bot user
 		mentionUser := botUser
 		if mentionUser == "" {
 			mentionUser = "agent"
@@ -234,7 +221,6 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		IssueBody:  payload.Issue.Body,
 	}
 
-	// Inject per-repo environment variables from config
 	if repoCfg, ok := h.cfg.Repos[payload.Repo.FullName]; ok {
 		job.EnvVars = repoCfg.Env
 		if repoCfg.Nixpacks != nil {
@@ -242,9 +228,16 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			job.NixpacksBuildCmd = repoCfg.Nixpacks.BuildCmd
 			job.NixpacksStartCmd = repoCfg.Nixpacks.StartCmd
 		}
+		if repoCfg.Preview != nil {
+			job.PreviewType = repoCfg.Preview.Type
+			job.PreviewDockerfilePath = repoCfg.Preview.DockerfilePath
+			job.PreviewComposeFile = repoCfg.Preview.DockerComposeFile
+			job.PreviewComposeService = repoCfg.Preview.DockerComposeService
+			job.PreviewPort = repoCfg.Preview.Port
+			job.PreviewBuildArgs = repoCfg.Preview.BuildArgs
+		}
 	}
 
-	// Set trigger type for the worker
 	if assigned {
 		os.Setenv("AGENT_TRIGGER_TYPE", "assign")
 	} else {
@@ -254,7 +247,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if eventType == webhook.EventIssueComment || eventType == webhook.EventPullRequestReview {
 		if payload.Issue.IsPullRequest() {
 			job.Continue = true
-		job.ID = job.ID + "-feedback"  // unique ID to avoid dedup with original issue job
+		job.ID = job.ID + "-feedback"
 			if payload.Comment != nil {
 				job.Feedback = payload.Comment.Body
 			}
@@ -305,10 +298,227 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// ---- Preview API handlers ----
 
+func (h *handler) handlePreviewsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	previews, err := h.previewMgr.List()
+	if err != nil {
+		log.Printf("preview list error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, previews)
+}
 
-// reconcilePreviews ensures all existing agent-preview-* containers are running
-// and their port mappings are written to {previewDir}/{repo}-{pr}.port.
+func (h *handler) handlePreviewAPI(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/preview/")
+	if path == "" || path == "/" {
+		http.Error(w, "missing repo and pr", http.StatusBadRequest)
+		return
+	}
+	parts := strings.SplitN(path, "/", 3)
+	if len(parts) < 2 {
+		http.Error(w, "path must be /api/preview/{repo}/{pr}[/{action}]", http.StatusBadRequest)
+		return
+	}
+	repo, prStr := parts[0], parts[1]
+	action := ""
+	if len(parts) > 2 {
+		action = parts[2]
+	}
+
+	pr, err := strconv.Atoi(prStr)
+	if err != nil {
+		http.Error(w, "invalid PR number", http.StatusBadRequest)
+		return
+	}
+
+	switch {
+	case r.Method == http.MethodGet && action == "":
+		h.handlePreviewStatus(w, r, repo, pr)
+	case r.Method == http.MethodPost && action == "":
+		h.handlePreviewCreate(w, r, repo, pr)
+	case r.Method == http.MethodDelete && action == "":
+		h.handlePreviewDestroy(w, r, repo, pr)
+	case r.Method == http.MethodPost && action == "stop":
+		h.handlePreviewStop(w, r, repo, pr)
+	case r.Method == http.MethodPost && action == "start":
+		h.handlePreviewStart(w, r, repo, pr)
+	case r.Method == http.MethodPost && action == "restart":
+		h.handlePreviewRestart(w, r, repo, pr)
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+func (h *handler) handlePreviewCreate(w http.ResponseWriter, r *http.Request, repo string, pr int) {
+	var req preview.CreateRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			req = preview.CreateRequest{}
+		}
+	}
+
+	if req.GitHubToken == "" && h.ghClient != nil {
+		token, err := h.ghClient.InstallationToken(r.Context())
+		if err == nil {
+			req.GitHubToken = token
+		}
+	}
+
+	if req.RepoURL == "" {
+		fullRepo := findFullRepoName(h.cfg.Repos, repo)
+		if fullRepo != "" {
+			req.RepoURL = "https://github.com/" + fullRepo + ".git"
+		} else {
+			req.RepoURL = "https://github.com/" + repo + ".git"
+		}
+	}
+
+	applyRepoConfig(h.cfg, &req, repo)
+
+	info, err := h.previewMgr.Create(req, repo, pr)
+	if err != nil {
+		log.Printf("preview create error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, info)
+}
+
+func (h *handler) handlePreviewStatus(w http.ResponseWriter, r *http.Request, repo string, pr int) {
+	info, err := h.previewMgr.Status(repo, pr)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+func (h *handler) handlePreviewDestroy(w http.ResponseWriter, r *http.Request, repo string, pr int) {
+	if err := h.previewMgr.Destroy(repo, pr); err != nil {
+		log.Printf("preview destroy error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "destroyed"})
+}
+
+func (h *handler) handlePreviewStop(w http.ResponseWriter, r *http.Request, repo string, pr int) {
+	if err := h.previewMgr.Stop(repo, pr); err != nil {
+		log.Printf("preview stop error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
+func (h *handler) handlePreviewStart(w http.ResponseWriter, r *http.Request, repo string, pr int) {
+	info, err := h.previewMgr.Start(repo, pr)
+	if err != nil {
+		log.Printf("preview start error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+func (h *handler) handlePreviewRestart(w http.ResponseWriter, r *http.Request, repo string, pr int) {
+	info, err := h.previewMgr.Restart(repo, pr)
+	if err != nil {
+		log.Printf("preview restart error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+// ---- Path rewriting for preview proxy ----
+
+// injectBaseTag rewrites HTML responses: inserts <base> tag and rewrites
+// src="/..." and href="/..." to use the preview prefix.
+func injectBaseTag(resp *http.Response, prefix string) {
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || len(body) == 0 {
+		return
+	}
+
+	prefixSlash := prefix + "/"
+
+	// Rewrite absolute paths in attributes FIRST (skip protocol-relative //)
+	body = rewriteHTMLAttr(body, "src=\"", "/", prefixSlash)
+	body = rewriteHTMLAttr(body, "src='", "/", prefixSlash)
+	body = rewriteHTMLAttr(body, "href=\"", "/", prefixSlash)
+	body = rewriteHTMLAttr(body, "href='", "/", prefixSlash)
+
+	// THEN inject <base> tag for relative URLs (won't be caught by rewrite)
+	baseTag := []byte("<base href=\"" + prefixSlash + "\">")
+	if idx := bytes.Index(body, []byte("<head>")); idx != -1 {
+		insertAt := idx + len("<head>")
+		body = append(body[:insertAt], append(baseTag, body[insertAt:]...)...)
+	} else if idx := bytes.Index(body, []byte("<body")); idx != -1 {
+		body = append(body[:idx], append(baseTag, body[idx:]...)...)
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = -1
+	resp.Header.Del("Content-Length")
+}
+
+// rewriteCSS rewrites url(/...) in CSS to use the preview prefix.
+func rewriteCSS(resp *http.Response, prefix string) {
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || len(body) == 0 {
+		return
+	}
+
+	prefixSlash := prefix + "/"
+
+	// Handle url("/..."), url('/...'), url(/...)
+	body = rewriteHTMLAttr(body, "url(\"", "/", prefixSlash)
+	body = rewriteHTMLAttr(body, "url('", "/", prefixSlash)
+	body = rewriteHTMLAttr(body, "url(", "/", prefixSlash)
+
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = -1
+	resp.Header.Del("Content-Length")
+}
+
+// rewriteHTMLAttr replaces attr="/path" with attr="/prefix/path"
+// but skips protocol-relative URLs (attr="//).
+func rewriteHTMLAttr(body []byte, attr, slash, prefix string) []byte {
+	search := []byte(attr + slash)
+	doubleSlash := []byte(attr + "//")
+	replace := []byte(attr + prefix)
+
+	var result []byte
+	for len(body) > 0 {
+		idx := bytes.Index(body, search)
+		if idx == -1 {
+			result = append(result, body...)
+			break
+		}
+		// Skip protocol-relative (//...)
+		if bytes.HasPrefix(body[idx:], doubleSlash) {
+			result = append(result, body[:idx+len(doubleSlash)]...)
+			body = body[idx+len(doubleSlash):]
+			continue
+		}
+		result = append(result, body[:idx]...)
+		result = append(result, replace...)
+		body = body[idx+len(search):]
+	}
+	return result
+}
+
+// ---- Reconcile & preview proxy ----
+
 func reconcilePreviews(previewDir string) {
 	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=agent-preview-",
 		"--format", "{{.Names}}\t{{.Status}}\t{{.Ports}}").Output()
@@ -330,8 +540,6 @@ func reconcilePreviews(previewDir string) {
 			ports = parts[2]
 		}
 
-		// Extract repo and PR from container name: agent-preview-{repo}-{pr}
-		// Name format: agent-preview-test-23
 		trimmed := strings.TrimPrefix(name, "agent-preview-")
 		lastDash := strings.LastIndex(trimmed, "-")
 		if lastDash < 0 {
@@ -340,18 +548,14 @@ func reconcilePreviews(previewDir string) {
 		repo := trimmed[:lastDash]
 		pr := trimmed[lastDash+1:]
 
-		// Start container if stopped
 		if strings.HasPrefix(status, "Exited") || strings.HasPrefix(status, "Created") {
 			log.Printf("preview reconcile: starting %s", name)
 			exec.Command("docker", "start", name).Run()
-			// Refresh status after start
 			time.Sleep(500 * time.Millisecond)
 		}
 
-		// Get port mapping
 		var port string
 		if strings.Contains(ports, "->") {
-			// Parse "0.0.0.0:32768->3000/tcp"
 			for _, mapping := range strings.Split(ports, ", ") {
 				parts := strings.SplitN(mapping, "->", 2)
 				if len(parts) == 2 {
@@ -363,7 +567,6 @@ func reconcilePreviews(previewDir string) {
 				}
 			}
 		} else {
-			// Try docker port command
 			for _, containerPort := range []string{"3000", "8080", "80"} {
 				portOut, _ := exec.Command("docker", "port", name, containerPort).Output()
 				if len(portOut) > 0 {
@@ -384,11 +587,8 @@ func reconcilePreviews(previewDir string) {
 	}
 }
 
-// previewHandler serves containerized previews via reverse proxy,
-// falling back to static files if no container is running.
 func previewHandler(previewDir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Parse /preview/{repo}/{pr}/...
 		path := strings.TrimPrefix(r.URL.Path, "/preview/")
 		parts := strings.SplitN(path, "/", 3)
 		if len(parts) < 2 {
@@ -397,13 +597,11 @@ func previewHandler(previewDir string) http.Handler {
 		}
 		repo, pr := parts[0], parts[1]
 
-		// Redirect /preview/{repo}/{pr} → /preview/{repo}/{pr}/ (relative links fix)
 		if len(parts) == 2 && !strings.HasSuffix(r.URL.Path, "/") {
 			http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 			return
 		}
 
-		// Check for containerized preview
 		portFile := filepath.Join(previewDir, repo+"-"+pr+".port")
 		portBytes, err := os.ReadFile(portFile)
 		if err == nil {
@@ -415,6 +613,13 @@ func previewHandler(previewDir string) http.Handler {
 				if loc := resp.Header.Get("Location"); loc != "" && strings.HasPrefix(loc, "/") {
 					resp.Header.Set("Location", prefix+loc)
 				}
+				ct := resp.Header.Get("Content-Type")
+				switch {
+				case strings.Contains(ct, "text/html"):
+					injectBaseTag(resp, prefix)
+				case strings.Contains(ct, "text/css"):
+					rewriteCSS(resp, prefix)
+				}
 				return nil
 			}
 			r.URL.Path = "/" + strings.Join(parts[2:], "/")
@@ -422,10 +627,17 @@ func previewHandler(previewDir string) http.Handler {
 			return
 		}
 
-		// Fallback: static files
 		staticDir := filepath.Join(previewDir, repo, pr)
 		http.StripPrefix("/preview/"+repo+"/"+pr, http.FileServer(http.Dir(staticDir))).ServeHTTP(w, r)
 	})
+}
+
+// ---- Helpers ----
+
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
 }
 
 func isActionRelevant(action string) bool {
@@ -459,6 +671,65 @@ func splitBySlash(s string) []string {
 	return parts
 }
 
+func findFullRepoName(repos map[string]config.RepoConfig, shortName string) string {
+	if _, ok := repos[shortName]; ok {
+		return shortName
+	}
+	suffix := "/" + shortName
+	for key := range repos {
+		if strings.HasSuffix(key, suffix) {
+			return key
+		}
+	}
+	return ""
+}
+
+func applyRepoConfig(cfg *config.Config, req *preview.CreateRequest, repo string) {
+	fullName := findFullRepoName(cfg.Repos, repo)
+	if fullName == "" {
+		return
+	}
+	repoCfg := cfg.Repos[fullName]
+	if req.InstallCmd == "" && repoCfg.Nixpacks != nil {
+		req.InstallCmd = repoCfg.Nixpacks.InstallCmd
+	}
+	if req.BuildCmd == "" && repoCfg.Nixpacks != nil {
+		req.BuildCmd = repoCfg.Nixpacks.BuildCmd
+	}
+	if req.StartCmd == "" && repoCfg.Nixpacks != nil {
+		req.StartCmd = repoCfg.Nixpacks.StartCmd
+	}
+	if req.Env == nil && len(repoCfg.Env) > 0 {
+		req.Env = make(map[string]string)
+		for k, v := range repoCfg.Env {
+			req.Env[k] = v
+		}
+	}
+	if repoCfg.Preview != nil {
+		if req.PreviewType == "" {
+			req.PreviewType = repoCfg.Preview.Type
+		}
+		if req.DockerfilePath == "" {
+			req.DockerfilePath = repoCfg.Preview.DockerfilePath
+		}
+		if req.DockerComposeFile == "" {
+			req.DockerComposeFile = repoCfg.Preview.DockerComposeFile
+		}
+		if req.DockerComposeService == "" {
+			req.DockerComposeService = repoCfg.Preview.DockerComposeService
+		}
+		if req.Port == 0 {
+			req.Port = repoCfg.Preview.Port
+		}
+		if req.BuildArgs == nil && len(repoCfg.Preview.BuildArgs) > 0 {
+			req.BuildArgs = make(map[string]string)
+			for k, v := range repoCfg.Preview.BuildArgs {
+				req.BuildArgs[k] = v
+			}
+		}
+	}
+}
+
 func queueCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "queue",
@@ -482,6 +753,7 @@ func configCmd() *cobra.Command {
 			fmt.Printf("  listen:      %s\n", cfg.ListenAddr)
 			fmt.Printf("  webhook:     %s\n", cfg.WebhookPath)
 			fmt.Printf("  media dir:   %s\n", cfg.MediaDir)
+			fmt.Printf("  preview dir: %s\n", cfg.PreviewDir)
 			fmt.Printf("  base URL:    %s\n", cfg.BaseURL)
 			fmt.Printf("  workers:     %d\n", cfg.MaxWorkers)
 			fmt.Printf("  app ID:      %d\n", cfg.GitHub.AppID)
