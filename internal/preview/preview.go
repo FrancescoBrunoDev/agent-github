@@ -131,14 +131,11 @@ if [ -n "${NODE_VER}" ] && [ "${NODE_VER}" != "lts" ]; then
     echo "==> Wrote .node-version: ${NODE_VER}"
 fi
 
-REPO=$(echo "${PREVIEW_REPO_URL}" | sed -n 's|https://[^/]*/[^/]*/\([^.]*\).*|\1|p')
-if [ -z "${REPO}" ]; then
-    REPO="${PREVIEW_REPO_NAME}"
-fi
 # Sanitize for filesystem: replace / with -
-SAFE_REPO=$(echo "${REPO}" | tr '/' '-')
-PREVIEW_IMAGE="preview-${REPO,,}-${PREVIEW_PR_NUMBER}"
-PREVIEW_CONTAINER="agent-preview-${REPO,,}-${PREVIEW_PR_NUMBER}"
+FULL_REPO_NAME="${PREVIEW_REPO_NAME}"
+SAFE_REPO=$(echo "${FULL_REPO_NAME}" | tr '/' '-')
+PREVIEW_IMAGE="preview-${SAFE_REPO,,}-${PREVIEW_PR_NUMBER}"
+PREVIEW_CONTAINER="agent-preview-${SAFE_REPO,,}-${PREVIEW_PR_NUMBER}"
 
 # ---- Stop any existing preview container ----
 docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
