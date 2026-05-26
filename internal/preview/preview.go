@@ -135,6 +135,8 @@ REPO=$(echo "${PREVIEW_REPO_URL}" | sed -n 's|https://[^/]*/[^/]*/\([^.]*\).*|\1
 if [ -z "${REPO}" ]; then
     REPO="${PREVIEW_REPO_NAME}"
 fi
+# Sanitize for filesystem: replace / with -
+SAFE_REPO=$(echo "${REPO}" | tr '/' '-')
 PREVIEW_IMAGE="preview-${REPO,,}-${PREVIEW_PR_NUMBER}"
 PREVIEW_CONTAINER="agent-preview-${REPO,,}-${PREVIEW_PR_NUMBER}"
 
@@ -181,7 +183,7 @@ if [ "${PREVIEW_TYPE:-}" = "dockerfile" ]; then
         done
         if [ -n "$PORT" ]; then
             mkdir -p /agent-preview
-            echo "$PORT" > "/agent-preview/${PREVIEW_REPO_NAME}-${PREVIEW_PR_NUMBER}.port"
+            echo "$PORT" > "/agent-preview/${SAFE_REPO}-${PREVIEW_PR_NUMBER}.port"
             echo "==> Dockerfile preview running on port ${PORT}"
             echo "PREVIEW_OK"
             exit 0
@@ -225,7 +227,7 @@ if [ "${PREVIEW_TYPE:-}" = "docker-compose" ]; then
             done
             if [ -n "$PORT" ]; then
                 mkdir -p /agent-preview
-                echo "$PORT" > "/agent-preview/${PREVIEW_REPO_NAME}-${PREVIEW_PR_NUMBER}.port"
+                echo "$PORT" > "/agent-preview/${SAFE_REPO}-${PREVIEW_PR_NUMBER}.port"
                 echo "==> Docker Compose preview running on port ${PORT}"
                 echo "PREVIEW_OK"
                 exit 0
@@ -270,7 +272,7 @@ if nixpacks build /workspace --name "${PREVIEW_IMAGE}" "${NIXPACKS_ARGS[@]}" 2>&
         done
         if [ -n "$PORT" ]; then
             mkdir -p /agent-preview
-            echo "$PORT" > "/agent-preview/${PREVIEW_REPO_NAME}-${PREVIEW_PR_NUMBER}.port"
+            echo "$PORT" > "/agent-preview/${SAFE_REPO}-${PREVIEW_PR_NUMBER}.port"
             echo "==> Preview running on port ${PORT}"
             BUILT=true
         fi
@@ -303,7 +305,7 @@ DOCKERFILE
         done
         if [ -n "$PORT" ]; then
             mkdir -p /agent-preview
-            echo "$PORT" > "/agent-preview/${PREVIEW_REPO_NAME}-${PREVIEW_PR_NUMBER}.port"
+            echo "$PORT" > "/agent-preview/${SAFE_REPO}-${PREVIEW_PR_NUMBER}.port"
             echo "==> Static preview running on port ${PORT}"
             BUILT=true
         fi
@@ -314,9 +316,9 @@ fi
 if [ "$BUILT" != true ]; then
     echo "==> Falling back to file copy..."
     if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
-        mkdir -p "/agent-preview/${PREVIEW_REPO_NAME}/${PREVIEW_PR_NUMBER}"
-        cp -r /workspace/preview/* "/agent-preview/${PREVIEW_REPO_NAME}/${PREVIEW_PR_NUMBER}/" 2>&1
-        echo "0" > "/agent-preview/${PREVIEW_REPO_NAME}-${PREVIEW_PR_NUMBER}.port"
+        mkdir -p "/agent-preview/${SAFE_REPO}/${PREVIEW_PR_NUMBER}"
+        cp -r /workspace/preview/* "/agent-preview/${SAFE_REPO}/${PREVIEW_PR_NUMBER}/" 2>&1
+        echo "0" > "/agent-preview/${SAFE_REPO}-${PREVIEW_PR_NUMBER}.port"
         echo "==> Static files copied"
         BUILT=true
     fi
