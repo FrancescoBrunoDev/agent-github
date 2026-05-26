@@ -177,8 +177,10 @@ func serveCmd() *cobra.Command {
 			go func() {
 				<-ctx.Done()
 				log.Println("shutting down...")
+				previewMgr.Shutdown()
 				srv.Shutdown(context.Background())
 				previewMgr.Shutdown()
+				srv.Shutdown(context.Background())
 			}()
 
 			log.Printf("Agent listening on %s (media: %s/media/)", cfg.ListenAddr, cfg.BaseURL)
