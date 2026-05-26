@@ -8,10 +8,25 @@ agent](https://github.com/earendil-works/pi) with a local LLM.
 picks it up automatically. You can also mention `@agent` in a comment for
 legacy support or continuation mode.
 
+**Auto-triage:** optional LLM-based classifier that analyzes new issues on
+creation — simple issues are auto-assigned to the bot, complex ones get a
+`needs-human-assistance` label.
+
 ## How it works
 
 ```
+Issue opened (webhook)
+         │
+         ▼
+   Classifier enabled? (optional)
+    │              │
+    ▼              ▼
+  Simple → auto-  Complex → "needs
+  assign to bot   human assistance"
+    │              label (no action)
+    ▼
 Assign issue to @agent-bot
+   (or @agent mention)
          │
          ▼
    GitHub webhook (issues: assigned)
@@ -33,6 +48,7 @@ Assign issue to @agent-bot
 
 ## Features
 
+- **Auto-triage** (optional): LLM classifier analyzes new issues → simple ones auto-assigned to bot, complex ones flagged for human review
 - **Assignment-driven**: assign an issue to the bot user and Agent starts working
 - **Mention fallback**: `@agent` in comments still works for legacy and PR feedback
 - **Isolated**: each job runs in its own Docker container
