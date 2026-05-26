@@ -3,9 +3,14 @@ set -euo pipefail
 
 echo "==> Agent worker starting for ${REPO_URL}#${ISSUE_NUMBER}"
 echo "==> Mode: ${AGENT_CONTINUE:+CONTINUATION}${AGENT_CONTINUE:-NEW}"
+echo "==> Platform: ${AGENT_PLATFORM:-github}"
 
-REPO_OWNER=$(echo "${REPO_URL}" | sed -n 's|https://github.com/\([^/]*\)/.*|\1|p')
-REPO_NAME=$(echo "${REPO_URL}" | sed -n 's|https://github.com/[^/]*/\([^.]*\).*|\1|p')
+# Detect platform
+PLATFORM="${AGENT_PLATFORM:-github}"
+
+# Parse repo owner/name from URL (works for both GitHub and Gitea)
+REPO_OWNER=$(echo "${REPO_URL}" | sed -n 's|https://[^/]*/\([^/]*\)/.*|\1|p')
+REPO_NAME=$(echo "${REPO_URL}" | sed -n 's|https://[^/]*/[^/]*/\([^.]*\)\(.git\)\?$|\1|p')
 
 # ---- Set up pi agent configuration ----
 mkdir -p ~/.pi/agent
@@ -25,21 +30,42 @@ if [ -n "${AGENT_PI_AUTH:-}" ] && [ "${AGENT_PI_AUTH}" != "{}" ]; then
     echo "==> Pi auth written"
 fi
 
-# Auth: use bot token for gh CLI (comments, PRs) if available, else installation token
-if [ -n "${AGENT_BOT_TOKEN:-}" ]; then
-    export GH_TOKEN="${AGENT_BOT_TOKEN}"
-    echo "==> Using bot user token for gh operations"
-else
-    export GH_TOKEN="${GITHUB_TOKEN}"
-fi
-gh auth status 2>&1 || true
+# Auth: use bot token for CLI tools (comments, PRs) if available, else installation/PAT token
+if [ "$PLATFORM" = "gitea" ]; then
+    # Gitea: use tea CLI with Gitea token
+    if [ -n "${AGENT_GITEA_BOT_TOKEN:-}" ]; then
+        GITEA_TOKEN="${AGENT_GITEA_BOT_TOKEN}"
+    else
+        GITEA_TOKEN="${GITHUB_TOKEN}"
+    fi
 
-# ---- Clone repo (always uses installation token via URL) ----
+    GITEA_BASE="${AGENT_GITEA_BASE_URL:-https://gitea.com}"
+    echo "==> Logging into Gitea at ${GITEA_BASE}..."
+    tea login add --name agent --url "${GITEA_BASE}" --token "${GITEA_TOKEN}" 2>&1 || true
+    tea logins 2>&1 || true
+else
+    # GitHub: use gh CLI
+    if [ -n "${AGENT_BOT_TOKEN:-}" ]; then
+        export GH_TOKEN="${AGENT_BOT_TOKEN}"
+        echo "==> Using bot user token for gh operations"
+    else
+        export GH_TOKEN="${GITHUB_TOKEN}"
+    fi
+    gh auth status 2>&1 || true
+fi
+
+# ---- Clone repo (always uses installation/PAT token via URL) ----
 if [ -z "${GITHUB_TOKEN:-}" ]; then
     echo "==> ERROR: GITHUB_TOKEN is empty"
     exit 1
 fi
-AUTH_REPO_URL=$(echo "${REPO_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+
+# Adapt auth URL format for platform
+if [ "$PLATFORM" = "gitea" ]; then
+    AUTH_REPO_URL=$(echo "${REPO_URL}" | sed "s|https://|https://oauth2:${GITHUB_TOKEN}@|")
+else
+    AUTH_REPO_URL=$(echo "${REPO_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+fi
 git clone "${AUTH_REPO_URL}" /workspace 2>&1
 cd /workspace
 
@@ -47,12 +73,68 @@ git config user.name "${AGENT_BOT_USER:-Agent}"
 git config user.email "${AGENT_BOT_USER:-agent}@francesco-bruno.com"
 git config remote.origin.url "${AUTH_REPO_URL}"
 
+# ---- Helper functions that abstract platform differences ----
+
+post_comment() {
+    local issue_num="$1"
+    local body="$2"
+    if [ "$PLATFORM" = "gitea" ]; then
+        echo "${body}" | tea comment --repo "${REPO_OWNER}/${REPO_NAME}" --issue "${issue_num}" 2>&1 || true
+    else
+        gh issue comment "${issue_num}" --body "${body}" 2>&1 || true
+    fi
+}
+
+delete_comment() {
+    local comment_id="$1"
+    if [ "$PLATFORM" = "gitea" ]; then
+        curl -s -X DELETE "${GITEA_BASE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${comment_id}" \
+            -H "Authorization: token ${GITEA_TOKEN}" 2>&1 || true
+    else
+        gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${comment_id}" -X DELETE 2>&1 || true
+    fi
+}
+
+create_pr() {
+    local title="$1"
+    local body="$2"
+    if [ "$PLATFORM" = "gitea" ]; then
+        tea pr create --repo "${REPO_OWNER}/${REPO_NAME}" \
+            --head "${BRANCH}" --base main \
+            --title "${title}" --description "${body}" 2>&1 || true
+    else
+        gh pr create --title "${title}" --body "${body}" 2>&1 || true
+    fi
+}
+
+get_pr_number() {
+    if [ "$PLATFORM" = "gitea" ]; then
+        tea pr list --repo "${REPO_OWNER}/${REPO_NAME}" --head "${BRANCH}" --output json 2>/dev/null | jq -r '.[0].number' 2>/dev/null || echo ""
+    else
+        gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo ""
+    fi
+}
+
+pr_comment() {
+    local pr_num="$1"
+    local body="$2"
+    if [ "$PLATFORM" = "gitea" ]; then
+        echo "${body}" | tea comment --repo "${REPO_OWNER}/${REPO_NAME}" --issue "${pr_num}" 2>&1 || true
+    else
+        gh pr comment "${pr_num}" --body "${body}" 2>&1 || true
+    fi
+}
+
 # ---- Determine branch ----
 BRANCH="${AGENT_BRANCH:-agent/issue-${ISSUE_NUMBER}}"
 
 # ---- Fetch conversation ----
 CONVERSATION="## Original issue\n\n**Title:** ${ISSUE_TITLE}\n\n${ISSUE_BODY}"
-COMMENTS_JSON=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/comments" --jq '.[] | "**@" + .user.login + ":** " + .body' 2>/dev/null || echo "")
+if [ "$PLATFORM" = "gitea" ]; then
+    COMMENTS_JSON=$(tea comments --repo "${REPO_OWNER}/${REPO_NAME}" --output json 2>/dev/null | jq -r '.[] | "**@" + .poster.login + ":** " + .body' 2>/dev/null || echo "")
+else
+    COMMENTS_JSON=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}/comments" --jq '.[] | "**@" + .user.login + ":** " + .body' 2>/dev/null || echo "")
+fi
 if [ -n "${COMMENTS_JSON}" ]; then
     CONVERSATION="${CONVERSATION}\n\n## Comments\n\n${COMMENTS_JSON}"
 fi
@@ -78,7 +160,7 @@ if [ "${AGENT_CONTINUE:-false}" = "true" ]; then
     git checkout "${BRANCH}" 2>&1
 
     cat > /tmp/prompt.md <<PROMPT
-You are Agent, an AI agent that solves GitHub issues.
+You are Agent, an AI agent that solves issues on ${PLATFORM} forges.
 
 This is a **continuation** of your previous work on issue #${ISSUE_NUMBER}.
 A reviewer left feedback on your pull request. Read the full conversation.
@@ -95,7 +177,7 @@ ${AGENT_FEEDBACK}
 
 0. **First**: if AGENTS.md doesn't exist at the repo root, create one (see new-issue instructions for format). Commit it separately.
 1. Read the feedback and full conversation carefully.
-2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` to ask.
+2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` (or \`tea comment\` on Gitea) to ask.
 3. Implement the requested changes. Use \`agent-browser\` to test UI changes if applicable.
 4. When done: commit with a descriptive message, push to \`${BRANCH}\`. Update the PR body:
    \`gh pr edit --body "## Changes made
@@ -108,7 +190,7 @@ else
     echo "==> NEW issue mode — will create branch ${BRANCH}"
 
     cat > /tmp/prompt.md <<PROMPT
-You are Agent, an AI agent that solves GitHub issues.
+You are Agent, an AI agent that solves issues on ${PLATFORM} forges.
 
 Your task is to resolve the following issue.
 
@@ -127,7 +209,7 @@ ${CONVERSATION}
    Read package.json, config files, and source layout to gather this info. Keep it concise.
    Commit this file before starting the fix: \`git add AGENTS.md && git commit -m "docs: add AGENTS.md"\`
 1. Understand the issue and all comments thoroughly.
-2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` to ask.
+2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` (or \`tea comment\` on Gitea) to ask.
 3. Implement the fix. Use \`agent-browser\` to test UI changes if applicable.
 4. If your fix produces static/build output (e.g., from npm run build), copy it to a preview/ directory in /workspace/.
 5. When done:
@@ -213,7 +295,7 @@ if [ "$(ls -A /tmp/agent-upload 2>/dev/null)" ]; then
         cp "${img}" "/agent-media/${FNAME}"
         COMMENT_BODY="${COMMENT_BODY}"$'\n'"![${FNAME}](${AGENT_BASE_URL}/media/${FNAME})"
     done
-    gh issue comment "${ISSUE_NUMBER}" --body "${COMMENT_BODY}" 2>&1 || true
+    post_comment "${ISSUE_NUMBER}" "${COMMENT_BODY}"
 fi
 
 rm -rf /tmp/agent-upload

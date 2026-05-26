@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/agent-github/agent/internal/config"
+	"github.com/agent-github/agent/internal/gitea"
 	"github.com/agent-github/agent/internal/github"
 	"github.com/agent-github/agent/internal/preview"
 	"github.com/agent-github/agent/internal/queue"
@@ -80,6 +81,17 @@ func serveCmd() *cobra.Command {
 			if cfg.GitHub.BotToken != "" {
 				os.Setenv("AGENT_BOT_TOKEN", cfg.GitHub.BotToken)
 			}
+			if cfg.Gitea.BotUser != "" {
+				os.Setenv("AGENT_GITEA_BOT_USER", cfg.Gitea.BotUser)
+			}
+			if cfg.Gitea.BotToken != "" {
+				os.Setenv("AGENT_GITEA_BOT_TOKEN", cfg.Gitea.BotToken)
+			} else if cfg.Gitea.Token != "" {
+				os.Setenv("AGENT_GITEA_BOT_TOKEN", cfg.Gitea.Token)
+			}
+			if cfg.Gitea.BaseURL != "" {
+				os.Setenv("AGENT_GITEA_BASE_URL", cfg.Gitea.BaseURL)
+			}
 
 			var ghClient *github.Client
 			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.PrivateKeyFile != "" {
@@ -90,7 +102,13 @@ func serveCmd() *cobra.Command {
 				}
 			}
 
-			h := &handler{cfg: cfg, queue: q, ghClient: ghClient, previewMgr: previewMgr}
+			var giteaClient *gitea.Client
+			if cfg.Gitea.BaseURL != "" && cfg.Gitea.Token != "" {
+				giteaClient = gitea.NewClient(cfg.Gitea.BaseURL, cfg.Gitea.Token)
+				log.Printf("Gitea client configured for %s", cfg.Gitea.BaseURL)
+			}
+
+			h := &handler{cfg: cfg, queue: q, ghClient: ghClient, giteaClient: giteaClient, previewMgr: previewMgr}
 
 			mux := http.NewServeMux()
 			mux.HandleFunc(cfg.WebhookPath, h.handleWebhook)
@@ -134,10 +152,11 @@ func serveCmd() *cobra.Command {
 }
 
 type handler struct {
-	cfg        *config.Config
-	queue      *queue.Queue
-	ghClient   *github.Client
-	previewMgr *preview.Manager
+	cfg         *config.Config
+	queue       *queue.Queue
+	ghClient    *github.Client
+	giteaClient *gitea.Client
+	previewMgr  *preview.Manager
 }
 
 func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -146,14 +165,27 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eventType := r.Header.Get("X-GitHub-Event")
-	log.Printf("webhook: received %s event", eventType)
-	payload, err := webhook.Parse(r, h.cfg.GitHub.WebhookSecret)
+	// Detect platform from event header (before parsing, needed for secret selection)
+	eventType := r.Header.Get(webhook.EventHeaderGH)
+	platform := webhook.PlatformGitHub
+	if eventType == "" {
+		eventType = r.Header.Get(webhook.EventHeaderGitea)
+		if eventType != "" {
+			platform = webhook.PlatformGitea
+		}
+	}
+	log.Printf("webhook: received %s event (platform=%s)", eventType, platform)
+
+	secret := h.webhookSecret(platform)
+	parsedPlatform, payload, err := webhook.Parse(r, secret)
 	if err != nil {
 		log.Printf("webhook parse error: %v", err)
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
+	// Use the platform detected inside Parse (more reliable)
+	platform = parsedPlatform
+	log.Printf("webhook: platform=%s", platform)
 
 	// PR closed → clean up preview
 	if eventType == webhook.EventPullRequest && payload.Action == "closed" && payload.PullRequest != nil && payload.Repo != nil {
@@ -184,7 +216,13 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine bot user based on platform
 	botUser := os.Getenv("AGENT_BOT_USER")
+	if platform == webhook.PlatformGitea {
+		if gb := os.Getenv("AGENT_GITEA_BOT_USER"); gb != "" {
+			botUser = gb
+		}
+	}
 	assigned := botUser != "" && payload.IsAssignedTo(botUser)
 
 	if !assigned {
@@ -251,27 +289,51 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			if payload.Comment != nil {
 				job.Feedback = payload.Comment.Body
 			}
-			if h.ghClient != nil {
-				owner, repo := splitRepoName(payload.Repo.FullName)
-				branch, err := h.ghClient.GetPRHead(context.Background(), owner, repo, payload.Issue.Number)
-				if err != nil {
-					log.Printf("failed to get PR head branch: %v", err)
-				} else {
-					job.Branch = branch
-				}
+			owner, repo := splitRepoName(payload.Repo.FullName)
+			var branch string
+			var branchErr error
+			if platform == webhook.PlatformGitea && h.giteaClient != nil {
+				branch, branchErr = h.giteaClient.GetPRHead(context.Background(), owner, repo, payload.Issue.Number)
+			} else if h.ghClient != nil {
+				branch, branchErr = h.ghClient.GetPRHead(context.Background(), owner, repo, payload.Issue.Number)
+			}
+			if branchErr != nil {
+				log.Printf("failed to get PR head branch: %v", branchErr)
+			} else {
+				job.Branch = branch
 			}
 			log.Printf("continuation mode for %s (branch: %s)", job.ID, job.Branch)
 		}
 	}
 
-	if h.ghClient != nil {
-		token, err := h.ghClient.InstallationToken(context.Background())
-		if err != nil {
-			log.Printf("failed to generate installation token: %v", err)
-			http.Error(w, "auth failed", http.StatusInternalServerError)
+	// Generate token based on platform
+	switch platform {
+	case webhook.PlatformGitea:
+		if h.giteaClient != nil {
+			token, err := h.giteaClient.InstallationToken(context.Background())
+			if err != nil {
+				log.Printf("failed to get gitea token: %v", err)
+				http.Error(w, "auth failed", http.StatusInternalServerError)
+				return
+			}
+			job.GitHubToken = token
+			os.Setenv("AGENT_PLATFORM", "gitea")
+		} else {
+			log.Printf("gitea event but no gitea client configured")
+			http.Error(w, "gitea not configured", http.StatusInternalServerError)
 			return
 		}
-		job.GitHubToken = token
+	default:
+		if h.ghClient != nil {
+			token, err := h.ghClient.InstallationToken(context.Background())
+			if err != nil {
+				log.Printf("failed to generate installation token: %v", err)
+				http.Error(w, "auth failed", http.StatusInternalServerError)
+				return
+			}
+			job.GitHubToken = token
+			os.Setenv("AGENT_PLATFORM", "github")
+		}
 	}
 
 	if h.queue.IsActive(job.ID) {
@@ -633,6 +695,13 @@ func previewHandler(previewDir string) http.Handler {
 }
 
 // ---- Helpers ----
+
+func (h *handler) webhookSecret(platform webhook.Platform) string {
+	if platform == webhook.PlatformGitea {
+		return h.cfg.Gitea.WebhookSecret
+	}
+	return h.cfg.GitHub.WebhookSecret
+}
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")

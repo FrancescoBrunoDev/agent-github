@@ -17,6 +17,7 @@ type Config struct {
 	BaseURL     string `yaml:"base_url"`
 
 	GitHub GitHubConfig           `yaml:"github"`
+	Gitea  GiteaConfig            `yaml:"gitea"`
 	Queue  QueueConfig            `yaml:"queue"`
 	Pi     PiConfig               `yaml:"pi"`
 	Repos  map[string]RepoConfig  `yaml:"repos"` // key = owner/repo
@@ -32,6 +33,22 @@ type GitHubConfig struct {
 	// for actions the App cannot perform (e.g., issue assignment).
 	BotUser string `yaml:"bot_user"`
 	// BotToken is a personal access token (PAT) for the bot user.
+	BotToken string `yaml:"bot_token"`
+}
+
+// GiteaConfig holds Gitea instance credentials.
+// Gitea uses personal access tokens (PAT), not GitHub App JWT auth.
+type GiteaConfig struct {
+	// BaseURL is the Gitea instance root URL, e.g. https://gitea.example.com.
+	BaseURL string `yaml:"base_url"`
+	// Token is a personal access token with repo + issue scope.
+	Token string `yaml:"token"`
+	// WebhookSecret is the HMAC secret for webhook signature verification.
+	WebhookSecret string `yaml:"webhook_secret"`
+	// BotUser is the Gitea username of the bot account.
+	BotUser string `yaml:"bot_user"`
+	// BotToken is a PAT for the bot user (for actions like self-assignment).
+	// If empty, the main Token is used.
 	BotToken string `yaml:"bot_token"`
 }
 
@@ -53,6 +70,9 @@ type PiConfig struct {
 // RepoConfig holds per-repo settings that apply only when processing jobs
 // from a specific repository.
 type RepoConfig struct {
+	// Platform overrides the auto-detected platform for this repo ("github" or "gitea").
+	Platform string `yaml:"platform"`
+
 	// Env defines extra environment variables injected into the worker
 	// container for this repo (e.g., API keys, feature flags).
 	Env map[string]string `yaml:"env"`

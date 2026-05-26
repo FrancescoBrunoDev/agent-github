@@ -24,6 +24,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Gitea CLI (tea) for Gitea forge support
+RUN curl -fsSL https://dl.gitea.com/tea/0.9.2/tea-0.9.2-linux-amd64 -o /usr/local/bin/tea \
+    && chmod +x /usr/local/bin/tea \
+    && tea --version
+
 # pi agent
 RUN npm install -g @earendil-works/pi-coding-agent
 

@@ -17,6 +17,17 @@ github:
   # bot_user: "agent-bot"
   # bot_token: "ghp_..."
 
+# Gitea configuration (optional — for self-hosted or gitea.com instances).
+# Gitea uses personal access tokens (PAT) instead of GitHub App auth.
+# Generate a token at: <your-gitea>/user/settings/applications
+# Token needs: read:repository, write:issue, write:repository scopes.
+gitea:
+  base_url: ""          # e.g. https://gitea.example.com
+  token: ""             # Personal access token
+  webhook_secret: ""    # HMAC secret for webhook verification
+  # bot_user: "agent-bot"   # Gitea username of the bot account
+  # bot_token: "..."        # PAT for the bot user (falls back to token if empty)
+
 queue:
   type: memory
 
