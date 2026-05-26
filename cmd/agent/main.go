@@ -790,14 +790,14 @@ func previewHandler(previewDir string) http.Handler {
 		}
 		platform, owner, repo, pr := parts[0], parts[1], parts[2], parts[3]
 		_ = platform // reserved for future routing
-		fullRepo := owner + "/" + repo
+		safeRepo := strings.ReplaceAll(owner+"/"+repo, "/", "-")
 
 		if len(parts) == 4 && !strings.HasSuffix(r.URL.Path, "/") {
 			http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 			return
 		}
 
-		portFile := filepath.Join(previewDir, fullRepo+"-"+pr+".port")
+		portFile := filepath.Join(previewDir, safeRepo+"-"+pr+".port")
 		portBytes, err := os.ReadFile(portFile)
 		if err == nil {
 			port := strings.TrimSpace(string(portBytes))
@@ -822,7 +822,7 @@ func previewHandler(previewDir string) http.Handler {
 			return
 		}
 
-		staticDir := filepath.Join(previewDir, fullRepo, pr)
+		staticDir := filepath.Join(previewDir, safeRepo, pr)
 		http.StripPrefix("/preview/"+platform+"/"+owner+"/"+repo+"/"+pr, http.FileServer(http.Dir(staticDir))).ServeHTTP(w, r)
 	})
 }
