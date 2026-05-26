@@ -140,21 +140,39 @@ if [ -n "${COMMENTS_JSON}" ]; then
 fi
 
 # ---- Post "working" comment (save ID for later deletion) ----
-WORKING_COMMENT_URL=$(gh issue comment "${ISSUE_NUMBER}" --body "🔧 I'm working on this..." 2>&1 || true)
+WORKING_MSG="🔧 I'm working on this..."
+if [ "$PLATFORM" = "gitea" ]; then
+    WORKING_COMMENT_URL=$(tea comment --repo "${REPO_OWNER}/${REPO_NAME}" --issue "${ISSUE_NUMBER}" <<< "${WORKING_MSG}" 2>&1 || true)
+else
+    WORKING_COMMENT_URL=$(gh issue comment "${ISSUE_NUMBER}" --body "${WORKING_MSG}" 2>&1 || true)
+fi
 echo "Working comment: ${WORKING_COMMENT_URL}"
 WORKING_COMMENT_ID=$(echo "${WORKING_COMMENT_URL}" | grep -oP 'issuecomment-\K[0-9]+' || echo "")
 
 # ---- Self-assign issue (if bot user configured and not already assigned) ----
+# The classifier already handles assignment; this is a fallback for mention-triggered jobs.
 if [ "${AGENT_TRIGGER_TYPE:-}" != "assign" ] && [ -n "${AGENT_BOT_USER:-}" ] && [ -n "${AGENT_BOT_TOKEN:-}" ]; then
     echo "==> Self-assigning issue to ${AGENT_BOT_USER}..."
-    gh issue edit "${ISSUE_NUMBER}" --add-assignee "${AGENT_BOT_USER}" 2>&1 || true
+    if [ "$PLATFORM" = "gitea" ]; then
+        curl -s -X PATCH "${GITEA_BASE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/issues/${ISSUE_NUMBER}" \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"assignees\":[\"${AGENT_BOT_USER}\"]}" 2>&1 || true
+    else
+        gh issue edit "${ISSUE_NUMBER}" --add-assignee "${AGENT_BOT_USER}" 2>&1 || true
+    fi
 fi
 
 # ---- Branch / prompt logic ----
 if [ "${AGENT_CONTINUE:-false}" = "true" ]; then
     echo "==> CONTINUATION mode — checking out ${BRANCH}"
     git fetch origin "${BRANCH}" 2>&1 || {
-        gh issue comment "${ISSUE_NUMBER}" --body "❌ I couldn't find the branch \`${BRANCH}\` to continue." 2>&1 || true
+        BRANCH_MSG="❌ I couldn't find the branch \`${BRANCH}\` to continue."
+        if [ "$PLATFORM" = "gitea" ]; then
+            echo "${BRANCH_MSG}" | tea comment --repo "${REPO_OWNER}/${REPO_NAME}" --issue "${ISSUE_NUMBER}" 2>&1 || true
+        else
+            gh issue comment "${ISSUE_NUMBER}" --body "${BRANCH_MSG}" 2>&1 || true
+        fi
         exit 1
     }
     git checkout "${BRANCH}" 2>&1
@@ -177,14 +195,12 @@ ${AGENT_FEEDBACK}
 
 0. **First**: if AGENTS.md doesn't exist at the repo root, create one (see new-issue instructions for format). Commit it separately.
 1. Read the feedback and full conversation carefully.
-2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` (or \`tea comment\` on Gitea) to ask.
+2. If you need clarification, use \`$(if [ "$PLATFORM" = "gitea" ]; then echo "tea comment --repo ${REPO_OWNER}/${REPO_NAME} --issue ${ISSUE_NUMBER}"; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi)" ...\` to ask.
 3. Implement the requested changes. Use \`agent-browser\` to test UI changes if applicable.
-4. When done: commit with a descriptive message, push to \`${BRANCH}\`. Update the PR body:
-   \`gh pr edit --body "## Changes made
-- ..."\`
-6. If you took screenshots with agent-browser, save them in /workspace/.
-7. Write a summary comment:
-   \`gh issue comment ${ISSUE_NUMBER} --body "✅ Done! Here's what I changed:\n- ..."\`
+4. When done: commit with a descriptive message, push to \`${BRANCH}\`.
+5. If you took screenshots with agent-browser, save them in /workspace/.
+6. Write a summary comment:
+   \`$(if [ "$PLATFORM" = "gitea" ]; then echo "echo \"...\" | tea comment --repo ${REPO_OWNER}/${REPO_NAME} --issue ${ISSUE_NUMBER}"; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\`
 PROMPT
 else
     echo "==> NEW issue mode — will create branch ${BRANCH}"
@@ -209,23 +225,17 @@ ${CONVERSATION}
    Read package.json, config files, and source layout to gather this info. Keep it concise.
    Commit this file before starting the fix: \`git add AGENTS.md && git commit -m "docs: add AGENTS.md"\`
 1. Understand the issue and all comments thoroughly.
-2. If you need clarification, use \`gh issue comment ${ISSUE_NUMBER} --body "..."\` (or \`tea comment\` on Gitea) to ask.
+2. If you need clarification, use \`$(if [ "$PLATFORM" = "gitea" ]; then echo "echo \"...\" | tea comment --repo ${REPO_OWNER}/${REPO_NAME} --issue ${ISSUE_NUMBER}"; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\` to ask.
 3. Implement the fix. Use \`agent-browser\` to test UI changes if applicable.
 4. If your fix produces static/build output (e.g., from npm run build), copy it to a preview/ directory in /workspace/.
 5. When done:
    - \`git checkout -b ${BRANCH}\`
    - \`git commit -am "fix: ${ISSUE_TITLE}"\`
    - \`git push origin ${BRANCH}\`
-   - \`gh pr create --title "Fix #${ISSUE_NUMBER}: ${ISSUE_TITLE}" --body "## What I changed
-- ...
-
-## Why
-- ...
-
-Closes #${ISSUE_NUMBER}"\`
+   - $(if [ "$PLATFORM" = "gitea" ]; then echo "\`tea pr create --repo ${REPO_OWNER}/${REPO_NAME} --head ${BRANCH} --base main --title \"Fix #${ISSUE_NUMBER}: ${ISSUE_TITLE}\" --description \"...\"\`"; else echo "\`gh pr create --title \"Fix #${ISSUE_NUMBER}: ${ISSUE_TITLE}\" --body \"...\"\`"; fi)
 6. If you took screenshots with agent-browser, save them in /workspace/.
 7. Write a summary comment:
-   \`gh issue comment ${ISSUE_NUMBER} --body "✅ Done! Here's what I did:\n- ..."\`
+   \`$(if [ "$PLATFORM" = "gitea" ]; then echo "echo \"...\" | tea comment --repo ${REPO_OWNER}/${REPO_NAME} --issue ${ISSUE_NUMBER}"; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\`
 PROMPT
 fi
 
@@ -270,7 +280,12 @@ pi --print @/tmp/prompt.md
 # ---- Delete the "working" comment ----
 if [ -n "${WORKING_COMMENT_ID:-}" ]; then
     echo "==> Removing working comment..."
-    gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${WORKING_COMMENT_ID}" -X DELETE 2>&1 || true
+    if [ "$PLATFORM" = "gitea" ]; then
+        curl -s -X DELETE "${GITEA_BASE}/api/v1/repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${WORKING_COMMENT_ID}" \
+            -H "Authorization: token ${GITEA_TOKEN}" 2>&1 || true
+    else
+        gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${WORKING_COMMENT_ID}" -X DELETE 2>&1 || true
+    fi
 fi
 
 # ---- Upload screenshots to agent media server ----
@@ -307,7 +322,12 @@ echo "==> Building containerized preview..."
 PREVIEW_CONTAINER="agent-preview-${REPO_NAME}"
 docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
 
-PR_URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
+# Get PR URL (platform-aware)
+if [ "$PLATFORM" = "gitea" ]; then
+    PR_URL="${GITEA_BASE}/${REPO_OWNER}/${REPO_NAME}/pulls/$(tea pr list --repo "${REPO_OWNER}/${REPO_NAME}" --head "${BRANCH}" --output json 2>/dev/null | jq -r '.[0].number' 2>/dev/null || echo "")"
+else
+    PR_URL=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")
+fi
 if [ -n "$PR_URL" ]; then
     PR_NUMBER=$(echo "$PR_URL" | grep -oP '/pull/\K[0-9]+' || echo "")
     if [ -n "$PR_NUMBER" ]; then
@@ -345,7 +365,7 @@ if [ -n "$PR_URL" ]; then
                     mkdir -p /agent-preview
                     echo "$PORT" > "/agent-preview/${REPO_NAME}-${PR_NUMBER}.port"
                     echo "==> Preview running on port ${PORT}"
-                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                 else
                     echo "==> WARNING: could not determine preview port"
                     docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -392,7 +412,7 @@ DOCKERFILE
                             mkdir -p /agent-preview
                             echo "$PORT" > "/agent-preview/${REPO_NAME}-${PR_NUMBER}.port"
                             echo "==> Static preview running on port ${PORT}"
-                            gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                            post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                             PREVIEW_BUILT=true
                         else
                             docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -409,20 +429,20 @@ DOCKERFILE
                 if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
                     mkdir -p "/agent-preview/${REPO_NAME}/${PR_NUMBER}"
                     cp -r /workspace/preview/* "/agent-preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1
-                    gh issue comment "${ISSUE_NUMBER}" --body "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                     PREVIEW_BUILT=true
                 fi
             fi
 
             # All retries failed
             if [ "$PREVIEW_BUILT" != true ]; then
-                gh issue comment "${ISSUE_NUMBER}" --body "❌ No preview available — add a \`start\` script to package.json (e.g. \`\"start\": \"npx serve dist\"\`) to enable containerized previews." 2>&1 || true
+                post_comment "${ISSUE_NUMBER}" "❌ No preview available — add a \`start\` script to package.json (e.g. \`\"start\": \"npx serve dist\"\`) to enable containerized previews." 2>&1 || true
             fi
 
             # Comment preview link on the PR
             PREVIEW_LINK="${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/"
             if [ "$PREVIEW_BUILT" = true ]; then
-                gh pr comment "${PR_NUMBER}" --body "🌐 **Preview:** ${PREVIEW_LINK}" 2>&1 || true
+                pr_comment "${PR_NUMBER}" "🌐 **Preview:** ${PREVIEW_LINK}" 2>&1 || true
             fi
         fi
     fi

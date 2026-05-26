@@ -197,14 +197,12 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Detect platform from event header (before parsing, needed for secret selection)
-	eventType := r.Header.Get(webhook.EventHeaderGH)
-	platform := webhook.PlatformGitHub
+	// Detect platform: check Gitea headers first (Gitea also sends X-GitHub-Event).
+	eventType := r.Header.Get(webhook.EventHeaderGitea)
+	platform := webhook.PlatformGitea
 	if eventType == "" {
-		eventType = r.Header.Get(webhook.EventHeaderGitea)
-		if eventType != "" {
-			platform = webhook.PlatformGitea
-		}
+		eventType = r.Header.Get(webhook.EventHeaderGH)
+		platform = webhook.PlatformGitHub
 	}
 	log.Printf("webhook: received %s event (platform=%s)", eventType, platform)
 
@@ -249,11 +247,32 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ---- Issue Classification (auto-triage for newly opened issues) ----
+	// Runs for both GitHub and Gitea when a forge client is configured.
 	if eventType == webhook.EventIssue && payload.Action == "opened" &&
-		h.classifier != nil && h.ghClient != nil &&
-		payload.Repo != nil && payload.Issue != nil {
+		h.classifier != nil && payload.Repo != nil && payload.Issue != nil {
+
+		// Determine the right forge client and bot user for this platform.
+		var forgeClient classifierClient
+		switch platform {
+		case webhook.PlatformGitea:
+			if h.giteaClient != nil {
+				forgeClient = h.giteaClient
+			}
+		default:
+			if h.ghClient != nil {
+				forgeClient = h.ghClient
+			}
+		}
+		if forgeClient == nil {
+			goto skipClassify
+		}
 
 		botUser := os.Getenv("AGENT_BOT_USER")
+		if platform == webhook.PlatformGitea {
+			if gb := os.Getenv("AGENT_GITEA_BOT_USER"); gb != "" {
+				botUser = gb
+			}
+		}
 
 		// Don't classify if already assigned to the bot or mentioned
 		alreadyTargeted := false
@@ -284,7 +303,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 					// Simple → auto-assign to bot user, which triggers the main agent
 					log.Printf("classifier: issue %s/#%d classified as SIMPLE, assigning to %s",
 						payload.Repo.FullName, payload.Issue.Number, botUser)
-					if err := h.ghClient.AssignIssue(r.Context(), owner, repo, payload.Issue.Number, botUser); err != nil {
+					if err := forgeClient.AssignIssue(r.Context(), owner, repo, payload.Issue.Number, botUser); err != nil {
 						log.Printf("classifier: failed to assign issue: %v", err)
 					}
 					w.WriteHeader(http.StatusOK)
@@ -298,9 +317,9 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 						payload.Repo.FullName, payload.Issue.Number, label)
 
 					// Ensure the label exists on the repo (cached)
-					h.ensureLabelCached(r.Context(), owner, repo, label)
+					h.ensureLabelCachedForge(r.Context(), platform, owner, repo, label)
 
-					if err := h.ghClient.AddLabels(r.Context(), owner, repo, payload.Issue.Number, []string{label}); err != nil {
+					if err := forgeClient.AddLabels(r.Context(), owner, repo, payload.Issue.Number, []string{label}); err != nil {
 						log.Printf("classifier: failed to add label %q: %v", label, err)
 					}
 
@@ -314,6 +333,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+skipClassify:
 
 	// Determine bot user based on platform
 	botUser := os.Getenv("AGENT_BOT_USER")
@@ -323,6 +343,9 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	assigned := botUser != "" && payload.IsAssignedTo(botUser)
+
+	log.Printf("webhook: action=%s botUser=%q assigned=%v issue=%v repo=%v",
+		payload.Action, botUser, assigned, payload.Issue != nil, payload.Repo != nil)
 
 	if !assigned {
 		mentionUser := botUser
@@ -944,6 +967,14 @@ func configCmd() *cobra.Command {
 
 const defaultLabelColor = "e99695"
 
+// classifierClient is the subset of forge API methods needed by the classifier.
+// Both github.Client and gitea.Client satisfy this.
+type classifierClient interface {
+	AssignIssue(ctx context.Context, repoOwner, repoName string, issueNum int, assignee string) error
+	AddLabels(ctx context.Context, repoOwner, repoName string, issueNum int, labels []string) error
+	EnsureLabel(ctx context.Context, repoOwner, repoName, name, color, description string) error
+}
+
 // humanLabelOrDefault returns the configured human-assistance label, or the default.
 func humanLabelOrDefault(cfg *config.Config) string {
 	if cfg.Classifier.HumanAssistanceLabel != "" {
@@ -952,9 +983,9 @@ func humanLabelOrDefault(cfg *config.Config) string {
 	return "needs-human-assistance"
 }
 
-// ensureLabelCached calls EnsureLabel on GitHub API only once per repo.
+// ensureLabelCachedForge calls EnsureLabel via the right forge client, once per repo.
 // Subsequent calls for the same repo are no-ops.
-func (h *handler) ensureLabelCached(ctx context.Context, owner, repo, label string) {
+func (h *handler) ensureLabelCachedForge(ctx context.Context, platform webhook.Platform, owner, repo, label string) {
 	key := owner + "/" + repo
 	h.labelCacheMu.Lock()
 	if h.labelCache[key] {
@@ -963,7 +994,18 @@ func (h *handler) ensureLabelCached(ctx context.Context, owner, repo, label stri
 	}
 	h.labelCacheMu.Unlock()
 
-	if err := h.ghClient.EnsureLabel(ctx, owner, repo, label, defaultLabelColor, "Issue needs human assistance"); err != nil {
+	var err error
+	switch platform {
+	case webhook.PlatformGitea:
+		if h.giteaClient != nil {
+			err = h.giteaClient.EnsureLabel(ctx, owner, repo, label, defaultLabelColor, "Issue needs human assistance")
+		}
+	default:
+		if h.ghClient != nil {
+			err = h.ghClient.EnsureLabel(ctx, owner, repo, label, defaultLabelColor, "Issue needs human assistance")
+		}
+	}
+	if err != nil {
 		log.Printf("classifier: failed to ensure label %q: %v", label, err)
 		return
 	}

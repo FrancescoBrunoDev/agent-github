@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 )
@@ -45,11 +46,12 @@ type Payload struct {
 }
 
 type IssueData struct {
-	Number      int       `json:"number"`
-	Title       string    `json:"title"`
-	Body        string    `json:"body"`
-	URL         string    `json:"html_url"`
-	PullRequest *struct{} `json:"pull_request,omitempty"` // present if this is a PR
+	Number      int           `json:"number"`
+	Title       string        `json:"title"`
+	Body        string        `json:"body"`
+	URL         string        `json:"html_url"`
+	Assignee    *AssigneeData `json:"assignee,omitempty"`
+	PullRequest *struct{}     `json:"pull_request,omitempty"` // present if this is a PR
 }
 
 type AssigneeData struct {
@@ -66,10 +68,21 @@ func (i *IssueData) IsPullRequest() bool {
 }
 
 // IsAssignedTo returns true if the webhook payload is an assignment
-// event targeting the given username.
+// event targeting the given username. Checks both top-level assignee
+// (GitHub) and issue.assignee (Gitea).
 func (p *Payload) IsAssignedTo(user string) bool {
-	return p.Action == "assigned" && p.Assignee != nil &&
-		p.Assignee.Login == user && p.Issue != nil
+	if p.Action != "assigned" || p.Issue == nil {
+		return false
+	}
+	// GitHub: top-level assignee
+	if p.Assignee != nil && p.Assignee.Login == user {
+		return true
+	}
+	// Gitea: nested inside issue.assignee
+	if p.Issue.Assignee != nil && p.Issue.Assignee.Login == user {
+		return true
+	}
+	return false
 }
 
 type CommentData struct {
@@ -105,14 +118,13 @@ func Parse(r *http.Request, secret string) (Platform, *Payload, error) {
 	}
 	defer r.Body.Close()
 
-	// Detect platform from event header
-	eventHeader := r.Header.Get(EventHeaderGH)
-	platform := PlatformGitHub
+	// Detect platform: check Gitea-specific headers first, since Gitea
+	// also sends X-GitHub-Event for compatibility with GitHub receivers.
+	eventHeader := r.Header.Get(EventHeaderGitea)
+	platform := PlatformGitea
 	if eventHeader == "" {
-		eventHeader = r.Header.Get(EventHeaderGitea)
-		if eventHeader != "" {
-			platform = PlatformGitea
-		}
+		eventHeader = r.Header.Get(EventHeaderGH)
+		platform = PlatformGitHub
 	}
 
 	if secret != "" {
@@ -129,6 +141,10 @@ func Parse(r *http.Request, secret string) (Platform, *Payload, error) {
 	if err := json.Unmarshal(body, &p); err != nil {
 		return platform, nil, fmt.Errorf("decoding payload: %w", err)
 	}
+
+	// Debug: log parsed payload summary
+	log.Printf("webhook: parsed action=%q hasIssue=%v hasRepo=%v hasAssignee=%v",
+		p.Action, p.Issue != nil, p.Repo != nil, p.Assignee != nil)
 
 	return platform, &p, nil
 }

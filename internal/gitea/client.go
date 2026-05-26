@@ -131,6 +131,70 @@ func (c *Client) GetPRHead(ctx context.Context, repoOwner, repoName string, prNu
 	return result.Head.Ref, nil
 }
 
+// AddLabels adds labels to a Gitea issue.
+func (c *Client) AddLabels(ctx context.Context, repoOwner, repoName string, issueNum int, labels []string) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", repoOwner, repoName, issueNum)
+	payload := map[string]interface{}{"labels": labels}
+	jsonBody, _ := json.Marshal(payload)
+
+	resp, err := c.do(ctx, http.MethodPost, path, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return fmt.Errorf("adding labels: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("add labels: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// AssignIssue assigns a Gitea issue to a user by login.
+// Uses PATCH /repos/{owner}/{repo}/issues/{index} which is the universal
+// Gitea API (the /assignees sub-endpoint is only available in very recent versions).
+func (c *Client) AssignIssue(ctx context.Context, repoOwner, repoName string, issueNum int, assignee string) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d", repoOwner, repoName, issueNum)
+	payload := map[string]interface{}{"assignees": []string{assignee}}
+	jsonBody, _ := json.Marshal(payload)
+
+	resp, err := c.do(ctx, http.MethodPatch, path, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return fmt.Errorf("assigning issue: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("assign issue: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// EnsureLabel creates a label if it doesn't exist. Returns nil if label already exists.
+func (c *Client) EnsureLabel(ctx context.Context, repoOwner, repoName, name, color, description string) error {
+	path := fmt.Sprintf("/repos/%s/%s/labels", repoOwner, repoName)
+	payload := map[string]interface{}{
+		"name":        name,
+		"color":       color,
+		"description": description,
+	}
+	jsonBody, _ := json.Marshal(payload)
+
+	resp, err := c.do(ctx, http.MethodPost, path, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return fmt.Errorf("creating label: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 201 = created, 422 = already exists (ok)
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusUnprocessableEntity {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create label: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // ParseRepoURL extracts owner and repo name from a clone URL.
 func ParseRepoURL(raw string) (owner, name string, _ error) {
 	u, err := url.Parse(raw)

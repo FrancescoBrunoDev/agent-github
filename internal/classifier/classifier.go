@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -67,7 +68,7 @@ func (c *Classifier) Classify(ctx context.Context, title, body string) (Result, 
 			},
 		},
 		"temperature": 0.1,
-		"max_tokens":  10,
+		"max_tokens":  500,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("marshalling request: %w", err)
@@ -89,6 +90,8 @@ func (c *Classifier) Classify(ctx context.Context, title, body string) (Result, 
 		req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
 	}
 
+	log.Printf("classifier: calling %s (model=%s)", url, c.config.Model)
+
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return Result{}, fmt.Errorf("calling LLM: %w", err)
@@ -103,6 +106,9 @@ func (c *Classifier) Classify(ctx context.Context, title, body string) (Result, 
 	if resp.StatusCode != http.StatusOK {
 		return Result{}, fmt.Errorf("LLM API: HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
+
+	// Log the raw response for debugging
+	logRawResponse(respBody)
 
 	var result struct {
 		Choices []struct {
@@ -169,6 +175,16 @@ func LabelForClassification(result Result, humanLabel string) string {
 		return humanLabel
 	}
 	return ""
+}
+
+// logRawResponse logs the raw LLM response body for debugging.
+func logRawResponse(body []byte) {
+	const maxLen = 500
+	if len(body) > maxLen {
+		log.Printf("classifier: LLM response (truncated): %s...", string(body[:maxLen]))
+	} else {
+		log.Printf("classifier: LLM response: %s", string(body))
+	}
 }
 
 // KnownBaseURLs maps well-known providers to their default API base URLs.
