@@ -510,7 +510,6 @@ func (h *handler) handlePreviewAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platform, owner, repoName, prStr := parts[0], parts[1], parts[2], parts[3]
-	_ = platform
 	repo := owner + "/" + repoName
 	action := ""
 	if len(parts) > 4 {
@@ -527,7 +526,7 @@ func (h *handler) handlePreviewAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && action == "":
 		h.handlePreviewStatus(w, r, repo, pr)
 	case r.Method == http.MethodPost && action == "":
-		h.handlePreviewCreate(w, r, repo, pr)
+		h.handlePreviewCreate(w, r, platform, repo, pr)
 	case r.Method == http.MethodDelete && action == "":
 		h.handlePreviewDestroy(w, r, repo, pr)
 	case r.Method == http.MethodPost && action == "stop":
@@ -541,7 +540,7 @@ func (h *handler) handlePreviewAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *handler) handlePreviewCreate(w http.ResponseWriter, r *http.Request, repo string, pr int) {
+func (h *handler) handlePreviewCreate(w http.ResponseWriter, r *http.Request, platform, repo string, pr int) {
 	var req preview.CreateRequest
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -549,14 +548,7 @@ func (h *handler) handlePreviewCreate(w http.ResponseWriter, r *http.Request, re
 		}
 	}
 
-	// Check if this repo is configured for Gitea
-	fullRepo := findFullRepoName(h.cfg.Repos, repo)
-	isGitea := false
-	if fullRepo != "" {
-		if rc, ok := h.cfg.Repos[fullRepo]; ok && rc.Platform == "gitea" {
-			isGitea = true
-		}
-	}
+	isGitea := platform == "gitea"
 
 	if req.GitHubToken == "" {
 		if isGitea && h.giteaClient != nil {
@@ -575,8 +567,6 @@ func (h *handler) handlePreviewCreate(w http.ResponseWriter, r *http.Request, re
 	if req.RepoURL == "" {
 		if isGitea && h.cfg.Gitea.BaseURL != "" {
 			req.RepoURL = strings.TrimRight(h.cfg.Gitea.BaseURL, "/") + "/" + repo + ".git"
-		} else if fullRepo != "" {
-			req.RepoURL = "https://github.com/" + fullRepo + ".git"
 		} else {
 			req.RepoURL = "https://github.com/" + repo + ".git"
 		}

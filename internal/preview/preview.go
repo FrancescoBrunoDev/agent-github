@@ -80,7 +80,12 @@ set -euo pipefail
 echo "==> Preview builder starting for ${PREVIEW_REPO_NAME}#${PREVIEW_PR_NUMBER}"
 
 # ---- Clone repo ----
-AUTH_URL=$(echo "${PREVIEW_REPO_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+# Detect forge type from URL: GitHub uses x-access-token, Gitea uses oauth2
+if echo "${PREVIEW_REPO_URL}" | grep -q 'gitea\|gitea-pl'; then
+    AUTH_URL=$(echo "${PREVIEW_REPO_URL}" | sed "s|https://|https://oauth2:${GITHUB_TOKEN}@|")
+else
+    AUTH_URL=$(echo "${PREVIEW_REPO_URL}" | sed "s|https://|https://x-access-token:${GITHUB_TOKEN}@|")
+fi
 git clone "${AUTH_URL}" /workspace 2>&1
 cd /workspace
 
@@ -126,7 +131,7 @@ if [ -n "${NODE_VER}" ] && [ "${NODE_VER}" != "lts" ]; then
     echo "==> Wrote .node-version: ${NODE_VER}"
 fi
 
-REPO=$(echo "${PREVIEW_REPO_URL}" | sed -n 's|https://github.com/[^/]*/\([^.]*\).*|\1|p')
+REPO=$(echo "${PREVIEW_REPO_URL}" | sed -n 's|https://[^/]*/[^/]*/\([^.]*\).*|\1|p')
 if [ -z "${REPO}" ]; then
     REPO="${PREVIEW_REPO_NAME}"
 fi
@@ -744,6 +749,15 @@ func (m *Manager) previewURL(repo string, pr int) string {
 		return fmt.Sprintf("%s/preview/github/%s/%s/%d/", m.baseURL, parts[0], parts[1], pr)
 	}
 	return fmt.Sprintf("%s/preview/github/%s/%d/", m.baseURL, repo, pr)
+}
+
+// PreviewURLForPlatform builds a preview URL for a specific forge platform.
+func (m *Manager) PreviewURLForPlatform(platform, repo string, pr int) string {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) == 2 {
+		return fmt.Sprintf("%s/preview/%s/%s/%s/%d/", m.baseURL, platform, parts[0], parts[1], pr)
+	}
+	return fmt.Sprintf("%s/preview/%s/%s/%d/", m.baseURL, platform, repo, pr)
 }
 
 func parseContainerName(name string) (repo string, pr int) {
