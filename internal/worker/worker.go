@@ -23,6 +23,10 @@ type Job struct {
 	IssueNum   int
 	IssueTitle string
 	IssueBody  string
+	// Platform is the forge where this job originates ("github" or "gitea").
+	Platform string
+	// TriggerType is how this job was initiated ("assign" or "mention").
+	TriggerType string
 	// GitHubToken is the installation access token for gh CLI and git operations.
 	GitHubToken string
 	// Continue indicates this is a continuation of an existing PR (comment feedback).
@@ -152,8 +156,8 @@ func (m *Manager) Start(ctx context.Context, job Job) error {
 		"-e", "AGENT_BASE_URL=" + os.Getenv("AGENT_BASE_URL"),
 		"-e", "AGENT_BOT_USER=" + envOrEmpty("AGENT_BOT_USER"),
 		"-e", "AGENT_BOT_TOKEN=" + envOrEmpty("AGENT_BOT_TOKEN"),
-		"-e", "AGENT_TRIGGER_TYPE=" + envOrEmpty("AGENT_TRIGGER_TYPE"),
-		"-e", "AGENT_PLATFORM=" + envOrEmpty("AGENT_PLATFORM"),
+		"-e", "AGENT_TRIGGER_TYPE=" + job.TriggerType,
+		"-e", "AGENT_PLATFORM=" + job.Platform,
 		"-e", "AGENT_GITEA_BOT_USER=" + envOrEmpty("AGENT_GITEA_BOT_USER"),
 		"-e", "AGENT_GITEA_BOT_TOKEN=" + envOrEmpty("AGENT_GITEA_BOT_TOKEN"),
 		"-e", "AGENT_GITEA_BASE_URL=" + envOrEmpty("AGENT_GITEA_BASE_URL"),

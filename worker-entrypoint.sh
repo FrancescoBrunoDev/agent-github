@@ -2,7 +2,11 @@
 set -euo pipefail
 
 echo "==> Agent worker starting for ${REPO_URL}#${ISSUE_NUMBER}"
-echo "==> Mode: ${AGENT_CONTINUE:+CONTINUATION}${AGENT_CONTINUE:-NEW}"
+if [ "${AGENT_CONTINUE:-false}" = "true" ]; then
+    echo "==> Mode: CONTINUATION"
+else
+    echo "==> Mode: NEW"
+fi
 echo "==> Platform: ${AGENT_PLATFORM:-github}"
 
 # Detect platform

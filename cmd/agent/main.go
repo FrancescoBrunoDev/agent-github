@@ -399,9 +399,9 @@ skipClassify:
 	}
 
 	if assigned {
-		os.Setenv("AGENT_TRIGGER_TYPE", "assign")
+		job.TriggerType = "assign"
 	} else {
-		os.Setenv("AGENT_TRIGGER_TYPE", "mention")
+		job.TriggerType = "mention"
 	}
 
 	if eventType == webhook.EventIssueComment || eventType == webhook.EventPullRequestReview {
@@ -439,7 +439,7 @@ skipClassify:
 				return
 			}
 			job.GitHubToken = token
-			os.Setenv("AGENT_PLATFORM", "gitea")
+			job.Platform = "gitea"
 		} else {
 			log.Printf("gitea event but no gitea client configured")
 			http.Error(w, "gitea not configured", http.StatusInternalServerError)
@@ -454,7 +454,7 @@ skipClassify:
 				return
 			}
 			job.GitHubToken = token
-			os.Setenv("AGENT_PLATFORM", "github")
+			job.Platform = "github"
 		}
 	}
 
