@@ -16,7 +16,7 @@ PLATFORM="${AGENT_PLATFORM:-github}"
 REPO_OWNER=$(echo "${REPO_URL}" | sed -n 's|https://[^/]*/\([^/]*\)/.*|\1|p')
 REPO_NAME=$(echo "${REPO_URL}" | sed -n 's|https://[^/]*/[^/]*/\([^.]*\)\(.git\)\?$|\1|p')
 FULL_REPO="${REPO_OWNER}/${REPO_NAME}"
-SAFE_FULL="$(echo "${FULL_REPO}" | tr '/' '-')"
+SAFE_FULL="$(echo "${FULL_REPO}" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
 
 # Build preview URL: subdomain if AGENT_PREVIEW_DOMAIN is set, else path-based
 if [ -n "${AGENT_PREVIEW_DOMAIN:-}" ]; then

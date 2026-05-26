@@ -867,7 +867,7 @@ func previewHandler(previewDir string) http.Handler {
 		}
 		platform, owner, repo, pr := parts[0], parts[1], parts[2], parts[3]
 		_ = platform // reserved for future routing
-		safeRepo := strings.ReplaceAll(owner+"/"+repo, "/", "-")
+		safeRepo := strings.ToLower(strings.ReplaceAll(owner+"/"+repo, "/", "-"))
 
 		if len(parts) == 4 && !strings.HasSuffix(r.URL.Path, "/") {
 			http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)

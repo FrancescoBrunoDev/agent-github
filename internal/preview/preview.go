@@ -133,9 +133,9 @@ if [ -n "${NODE_VER}" ] && [ "${NODE_VER}" != "lts" ]; then
     echo "==> Wrote .node-version: ${NODE_VER}"
 fi
 
-# Sanitize for filesystem: replace / with -
+# Sanitize for filesystem: replace / with -, lowercase for Docker compat
 FULL_REPO_NAME="${PREVIEW_REPO_NAME}"
-SAFE_REPO=$(echo "${FULL_REPO_NAME}" | tr '/' '-')
+SAFE_REPO=$(echo "${FULL_REPO_NAME}" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
 PREVIEW_IMAGE="preview-${SAFE_REPO,,}-${PREVIEW_PR_NUMBER}"
 PREVIEW_CONTAINER="agent-preview-${SAFE_REPO,,}-${PREVIEW_PR_NUMBER}"
 
@@ -522,7 +522,7 @@ func (m *Manager) Destroy(repoName string, prNumber int) error {
 	os.Remove(m.portFile(repoName, prNumber))
 
 	// Cleanup static files dir if exists
-	safeRepo := strings.ReplaceAll(repoName, "/", "-")
+	safeRepo := strings.ToLower(strings.ReplaceAll(repoName, "/", "-"))
 	staticDir := filepath.Join(m.previewDir, safeRepo, strconv.Itoa(prNumber))
 	os.RemoveAll(staticDir)
 
@@ -538,7 +538,7 @@ func (m *Manager) Status(repoName string, prNumber int) (*ContainerInfo, error) 
 	}
 	if info == nil {
 		// Check for static fallback
-		safeRepo := strings.ReplaceAll(repoName, "/", "-")
+		safeRepo := strings.ToLower(strings.ReplaceAll(repoName, "/", "-"))
 		staticDir := filepath.Join(m.previewDir, safeRepo, strconv.Itoa(prNumber))
 		if _, err := os.Stat(staticDir); err == nil {
 			return &ContainerInfo{
@@ -657,8 +657,8 @@ func containerNameFor(repo string, pr int) string {
 }
 
 func (m *Manager) portFile(repo string, pr int) string {
-	// Replace / with - for filesystem safety (repo is owner/repo format)
-	safe := strings.ReplaceAll(repo, "/", "-")
+	// Replace / with -, lowercase for Docker/filesystem consistency
+	safe := strings.ToLower(strings.ReplaceAll(repo, "/", "-"))
 	return filepath.Join(m.previewDir, safe+"-"+strconv.Itoa(pr)+".port")
 }
 
@@ -745,7 +745,7 @@ func (m *Manager) waitForPort(containerName string, timeout time.Duration) int {
 
 func (m *Manager) previewURL(repo string, pr int) string {
 	if m.previewDomain != "" {
-		safe := strings.ReplaceAll(repo, "/", "-")
+		safe := strings.ToLower(strings.ReplaceAll(repo, "/", "-"))
 		return fmt.Sprintf("https://pr%d-%s.%s", pr, safe, m.previewDomain)
 	}
 	return fmt.Sprintf("%s/preview/github/%s/%d/", m.baseURL, repo, pr)
