@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/agent-github/agent/internal/classifier"
 	"github.com/agent-github/agent/internal/config"
 	"github.com/agent-github/agent/internal/github"
 	"github.com/agent-github/agent/internal/preview"
@@ -90,7 +91,32 @@ func serveCmd() *cobra.Command {
 				}
 			}
 
-			h := &handler{cfg: cfg, queue: q, ghClient: ghClient, previewMgr: previewMgr}
+			// Initialize classifier if enabled
+			var clf *classifier.Classifier
+			if cfg.Classifier.Enabled {
+				classCfg := classifier.Config{
+					Provider: cfg.Classifier.Provider,
+					Model:    cfg.Classifier.Model,
+					BaseURL:  cfg.Classifier.BaseURL,
+					APIKey:   cfg.Classifier.APIKey,
+				}
+				// Fall back to pi settings if classifier fields are empty
+				if classCfg.Provider == "" && cfg.Pi.Settings != nil {
+					classCfg.Provider = cfg.Pi.Settings.DefaultProvider
+				}
+				if classCfg.Model == "" && cfg.Pi.Settings != nil {
+					classCfg.Model = cfg.Pi.Settings.DefaultModel
+				}
+				if classCfg.APIKey == "" && cfg.Pi.Auth != "" {
+					// Try to extract API key from pi auth JSON
+					classCfg.APIKey = extractAPIKeyFromPiAuth(cfg.Pi.Auth, classCfg.Provider)
+				}
+				clf = classifier.New(classCfg)
+				log.Printf("classifier: initialized (model=%s, label=%s, auto_assign=%v)",
+					classCfg.Model, humanLabelOrDefault(cfg), cfg.Classifier.AutoAssign)
+			}
+
+			h := &handler{cfg: cfg, queue: q, ghClient: ghClient, previewMgr: previewMgr, classifier: clf}
 
 			mux := http.NewServeMux()
 			mux.HandleFunc(cfg.WebhookPath, h.handleWebhook)
@@ -138,6 +164,7 @@ type handler struct {
 	queue      *queue.Queue
 	ghClient   *github.Client
 	previewMgr *preview.Manager
+	classifier *classifier.Classifier
 }
 
 func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +211,76 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ---- Issue Classification (auto-triage for newly opened issues) ----
+	if eventType == webhook.EventIssue && payload.Action == "opened" &&
+		h.classifier != nil && h.ghClient != nil &&
+		payload.Repo != nil && payload.Issue != nil {
+
+		botUser := os.Getenv("AGENT_BOT_USER")
+
+		// Don't classify if already assigned to the bot or mentioned
+		alreadyTargeted := false
+		if botUser != "" {
+			if payload.IsAssignedTo(botUser) {
+				alreadyTargeted = true
+			}
+			var texts []string
+			if payload.Issue.Body != "" {
+				texts = append(texts, payload.Issue.Body)
+			}
+			if webhook.IsMentioned(botUser, texts...) {
+				alreadyTargeted = true
+			}
+		}
+
+		if !alreadyTargeted {
+			log.Printf("classifier: analyzing issue %s/#%d", payload.Repo.FullName, payload.Issue.Number)
+
+			result, err := h.classifier.Classify(context.Background(), payload.Issue.Title, payload.Issue.Body)
+			if err != nil {
+				log.Printf("classifier: classification failed: %v (will skip)", err)
+				// On classification failure, do nothing — fall through to normal behavior
+			} else {
+				owner, repo := splitRepoName(payload.Repo.FullName)
+
+				if result.Classification == classifier.ClassificationSimple && h.cfg.Classifier.AutoAssign && botUser != "" {
+					// Simple → auto-assign to bot user, which triggers the main agent
+					log.Printf("classifier: issue %s/#%d classified as SIMPLE, assigning to %s",
+						payload.Repo.FullName, payload.Issue.Number, botUser)
+					if err := h.ghClient.AssignIssue(context.Background(), owner, repo, payload.Issue.Number, botUser); err != nil {
+						log.Printf("classifier: failed to assign issue: %v", err)
+					}
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(`{"classified":"simple","assigned":"` + botUser + `"}`))
+					return
+				}
+
+				if result.Classification == classifier.ClassificationComplex {
+					label := humanLabelOrDefault(h.cfg)
+					log.Printf("classifier: issue %s/#%d classified as COMPLEX, adding label %q",
+						payload.Repo.FullName, payload.Issue.Number, label)
+
+					// Ensure the label exists on the repo
+					if err := h.ghClient.EnsureLabel(context.Background(), owner, repo, label, "e99695", "Issue needs human assistance"); err != nil {
+						log.Printf("classifier: failed to ensure label %q: %v", label, err)
+					}
+
+					if err := h.ghClient.AddLabels(context.Background(), owner, repo, payload.Issue.Number, []string{label}); err != nil {
+						log.Printf("classifier: failed to add label %q: %v", label, err)
+					}
+
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(`{"classified":"complex","label":"` + label + `"}`))
+					return
+				}
+
+				// Default: fall through to normal behavior
+				log.Printf("classifier: issue classified as %s, but no action configured", result.Classification)
+			}
+		}
+	}
+
+	// ---- Original trigger logic (assignment / mention) ----
 	botUser := os.Getenv("AGENT_BOT_USER")
 	assigned := botUser != "" && payload.IsAssignedTo(botUser)
 
@@ -247,7 +344,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if eventType == webhook.EventIssueComment || eventType == webhook.EventPullRequestReview {
 		if payload.Issue.IsPullRequest() {
 			job.Continue = true
-		job.ID = job.ID + "-feedback"
+			job.ID = job.ID + "-feedback"
 			if payload.Comment != nil {
 				job.Feedback = payload.Comment.Body
 			}
@@ -762,7 +859,46 @@ func configCmd() *cobra.Command {
 				fmt.Printf("  pi provider: %s\n", cfg.Pi.Settings.DefaultProvider)
 				fmt.Printf("  pi model:    %s\n", cfg.Pi.Settings.DefaultModel)
 			}
+			fmt.Printf("  classifier:  %v\n", cfg.Classifier.Enabled)
+			if cfg.Classifier.Enabled {
+				fmt.Printf("  classifier label: %s\n", humanLabelOrDefault(cfg))
+				fmt.Printf("  classifier auto-assign: %v\n", cfg.Classifier.AutoAssign)
+			}
 			return nil
 		},
 	}
+}
+
+// ---- Classifier helpers ----
+
+// humanLabelOrDefault returns the configured human-assistance label, or the default.
+func humanLabelOrDefault(cfg *config.Config) string {
+	if cfg.Classifier.HumanAssistanceLabel != "" {
+		return cfg.Classifier.HumanAssistanceLabel
+	}
+	return "needs-human-assistance"
+}
+
+// extractAPIKeyFromPiAuth attempts to parse the Pi auth JSON to find an API key
+// for the given provider. Pi auth is a JSON map keyed by provider name:
+//
+//	{"anthropic": {"type": "api_key", "key": "sk-ant-..."}}
+func extractAPIKeyFromPiAuth(authJSON, provider string) string {
+	if authJSON == "" || provider == "" {
+		return ""
+	}
+	var authMap map[string]interface{}
+	if err := json.Unmarshal([]byte(authJSON), &authMap); err != nil {
+		return ""
+	}
+	providerAuth, ok := authMap[provider]
+	if !ok {
+		return ""
+	}
+	pa, ok := providerAuth.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	key, _ := pa["key"].(string)
+	return key
 }

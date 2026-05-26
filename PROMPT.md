@@ -80,6 +80,7 @@ Two layers:
 | Control interface | **CLI + optional TUI** | Scriptable, inspectable, human-friendly overview. |
 | Agent | **pi agent** | Already selected. |
 | Service language | **Go** | Single binary, native Docker SDK (same codebase), goroutines for concurrency. |
+| Issue triage | **LLM classifier** | New issues are auto-classified: simple issues get assigned to the bot, complex ones get a `needs-human-assistance` label. |
 
 ## Runtime contract (happy path)
 
