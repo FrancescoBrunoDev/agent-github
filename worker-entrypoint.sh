@@ -46,6 +46,7 @@ if [ "$PLATFORM" = "gitea" ]; then
     GITEA_BASE="${AGENT_GITEA_BASE_URL:-https://gitea.com}"
     echo "==> Logging into Gitea at ${GITEA_BASE}..."
     tea login add --name agent --url "${GITEA_BASE}" --token "${GITEA_TOKEN}" 2>&1 || true
+    tea login default agent 2>&1 || true
     tea logins 2>&1 || true
 else
     # GitHub: use gh CLI
