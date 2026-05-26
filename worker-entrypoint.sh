@@ -391,6 +391,7 @@ if [ -n "$PR_NUMBER" ]; then
                     echo "$PORT" > "/agent-preview/${SAFE_FULL}-${PR_NUMBER}.port"
                     echo "==> Preview running on port ${PORT}"
                     post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
+                    pr_comment "${PR_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
                 else
                     echo "==> WARNING: could not determine preview port"
                     docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -438,6 +439,7 @@ DOCKERFILE
                             echo "$PORT" > "/agent-preview/${SAFE_FULL}-${PR_NUMBER}.port"
                             echo "==> Static preview running on port ${PORT}"
                             post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
+                            pr_comment "${PR_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
                             PREVIEW_BUILT=true
                         else
                             docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -455,6 +457,7 @@ DOCKERFILE
                     mkdir -p "/agent-preview/${SAFE_FULL}/${PR_NUMBER}"
                     cp -r /workspace/preview/* "/agent-preview/${SAFE_FULL}/${PR_NUMBER}/" 2>&1
                     post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
+                    pr_comment "${PR_NUMBER}" "🌐 **Preview:** ${PR_PREVIEW_URL}" 2>&1 || true
                     PREVIEW_BUILT=true
                 fi
             fi
@@ -462,12 +465,6 @@ DOCKERFILE
             # All retries failed
             if [ "$PREVIEW_BUILT" != true ]; then
                 post_comment "${ISSUE_NUMBER}" "❌ No preview available — add a \`start\` script to package.json (e.g. \`\"start\": \"npx serve dist\"\`) to enable containerized previews." 2>&1 || true
-            fi
-
-            # Comment preview link on the PR
-            PREVIEW_LINK="${PR_PREVIEW_URL}"
-            if [ "$PREVIEW_BUILT" = true ]; then
-                pr_comment "${PR_NUMBER}" "🌐 **Preview:** ${PREVIEW_LINK}" 2>&1 || true
             fi
         fi
     fi
