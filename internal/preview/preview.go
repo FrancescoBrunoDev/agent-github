@@ -516,7 +516,8 @@ func (m *Manager) Destroy(repoName string, prNumber int) error {
 	os.Remove(m.portFile(repoName, prNumber))
 
 	// Cleanup static files dir if exists
-	staticDir := filepath.Join(m.previewDir, repoName, strconv.Itoa(prNumber))
+	safeRepo := strings.ReplaceAll(repoName, "/", "-")
+	staticDir := filepath.Join(m.previewDir, safeRepo, strconv.Itoa(prNumber))
 	os.RemoveAll(staticDir)
 
 	return nil
@@ -531,7 +532,8 @@ func (m *Manager) Status(repoName string, prNumber int) (*ContainerInfo, error) 
 	}
 	if info == nil {
 		// Check for static fallback
-		staticDir := filepath.Join(m.previewDir, repoName, strconv.Itoa(prNumber))
+		safeRepo := strings.ReplaceAll(repoName, "/", "-")
+		staticDir := filepath.Join(m.previewDir, safeRepo, strconv.Itoa(prNumber))
 		if _, err := os.Stat(staticDir); err == nil {
 			return &ContainerInfo{
 				Name:       containerName,
@@ -649,7 +651,9 @@ func containerNameFor(repo string, pr int) string {
 }
 
 func (m *Manager) portFile(repo string, pr int) string {
-	return filepath.Join(m.previewDir, repo+"-"+strconv.Itoa(pr)+".port")
+	// Replace / with - for filesystem safety (repo is owner/repo format)
+	safe := strings.ReplaceAll(repo, "/", "-")
+	return filepath.Join(m.previewDir, safe+"-"+strconv.Itoa(pr)+".port")
 }
 
 func (m *Manager) readPortFile(repo string, pr int) int {
@@ -734,7 +738,12 @@ func (m *Manager) waitForPort(containerName string, timeout time.Duration) int {
 }
 
 func (m *Manager) previewURL(repo string, pr int) string {
-	return fmt.Sprintf("%s/preview/%s/%d/", m.baseURL, repo, pr)
+	// repo is "owner/repo" format; extract parts for the URL
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) == 2 {
+		return fmt.Sprintf("%s/preview/github/%s/%s/%d/", m.baseURL, parts[0], parts[1], pr)
+	}
+	return fmt.Sprintf("%s/preview/github/%s/%d/", m.baseURL, repo, pr)
 }
 
 func parseContainerName(name string) (repo string, pr int) {

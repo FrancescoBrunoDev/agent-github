@@ -220,12 +220,12 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// PR closed → clean up preview
 	if eventType == webhook.EventPullRequest && payload.Action == "closed" && payload.PullRequest != nil && payload.Repo != nil {
 		log.Printf("webhook: PR closed event for %s/#%d", payload.Repo.FullName, payload.PullRequest.Number)
-		repoName := payload.Repo.Name
+		repoFull := payload.Repo.FullName
 		prNum := payload.PullRequest.Number
-		if err := h.previewMgr.Destroy(repoName, prNum); err != nil {
+		if err := h.previewMgr.Destroy(repoFull, prNum); err != nil {
 			log.Printf("preview destroy error: %v", err)
 		} else {
-			log.Printf("preview cleaned up: %s/#%d", repoName, prNum)
+			log.Printf("preview cleaned up: %s/#%d", repoFull, prNum)
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"cleaned":"preview removed"}`))
@@ -501,18 +501,20 @@ func (h *handler) handlePreviewsList(w http.ResponseWriter, r *http.Request) {
 func (h *handler) handlePreviewAPI(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/preview/")
 	if path == "" || path == "/" {
-		http.Error(w, "missing repo and pr", http.StatusBadRequest)
+		http.Error(w, "missing platform, owner, repo and pr", http.StatusBadRequest)
 		return
 	}
-	parts := strings.SplitN(path, "/", 3)
-	if len(parts) < 2 {
-		http.Error(w, "path must be /api/preview/{repo}/{pr}[/{action}]", http.StatusBadRequest)
+	parts := strings.SplitN(path, "/", 5)
+	if len(parts) < 4 {
+		http.Error(w, "path must be /api/preview/{platform}/{owner}/{repo}/{pr}[/{action}]", http.StatusBadRequest)
 		return
 	}
-	repo, prStr := parts[0], parts[1]
+	platform, owner, repoName, prStr := parts[0], parts[1], parts[2], parts[3]
+	_ = platform
+	repo := owner + "/" + repoName
 	action := ""
-	if len(parts) > 2 {
-		action = parts[2]
+	if len(parts) > 4 {
+		action = parts[4]
 	}
 
 	pr, err := strconv.Atoi(prStr)
@@ -547,16 +549,33 @@ func (h *handler) handlePreviewCreate(w http.ResponseWriter, r *http.Request, re
 		}
 	}
 
-	if req.GitHubToken == "" && h.ghClient != nil {
-		token, err := h.ghClient.InstallationToken(r.Context())
-		if err == nil {
-			req.GitHubToken = token
+	// Check if this repo is configured for Gitea
+	fullRepo := findFullRepoName(h.cfg.Repos, repo)
+	isGitea := false
+	if fullRepo != "" {
+		if rc, ok := h.cfg.Repos[fullRepo]; ok && rc.Platform == "gitea" {
+			isGitea = true
+		}
+	}
+
+	if req.GitHubToken == "" {
+		if isGitea && h.giteaClient != nil {
+			token, err := h.giteaClient.InstallationToken(r.Context())
+			if err == nil {
+				req.GitHubToken = token
+			}
+		} else if h.ghClient != nil {
+			token, err := h.ghClient.InstallationToken(r.Context())
+			if err == nil {
+				req.GitHubToken = token
+			}
 		}
 	}
 
 	if req.RepoURL == "" {
-		fullRepo := findFullRepoName(h.cfg.Repos, repo)
-		if fullRepo != "" {
+		if isGitea && h.cfg.Gitea.BaseURL != "" {
+			req.RepoURL = strings.TrimRight(h.cfg.Gitea.BaseURL, "/") + "/" + repo + ".git"
+		} else if fullRepo != "" {
 			req.RepoURL = "https://github.com/" + fullRepo + ".git"
 		} else {
 			req.RepoURL = "https://github.com/" + repo + ".git"
@@ -774,25 +793,27 @@ func reconcilePreviews(previewDir string) {
 func previewHandler(previewDir string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/preview/")
-		parts := strings.SplitN(path, "/", 3)
-		if len(parts) < 2 {
+		parts := strings.SplitN(path, "/", 5)
+		if len(parts) < 4 {
 			http.NotFound(w, r)
 			return
 		}
-		repo, pr := parts[0], parts[1]
+		platform, owner, repo, pr := parts[0], parts[1], parts[2], parts[3]
+		_ = platform // reserved for future routing
+		fullRepo := owner + "/" + repo
 
-		if len(parts) == 2 && !strings.HasSuffix(r.URL.Path, "/") {
+		if len(parts) == 4 && !strings.HasSuffix(r.URL.Path, "/") {
 			http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 			return
 		}
 
-		portFile := filepath.Join(previewDir, repo+"-"+pr+".port")
+		portFile := filepath.Join(previewDir, fullRepo+"-"+pr+".port")
 		portBytes, err := os.ReadFile(portFile)
 		if err == nil {
 			port := strings.TrimSpace(string(portBytes))
 			target, _ := url.Parse("http://localhost:" + port)
 			proxy := httputil.NewSingleHostReverseProxy(target)
-			prefix := "/preview/" + repo + "/" + pr
+			prefix := "/preview/" + platform + "/" + owner + "/" + repo + "/" + pr
 			proxy.ModifyResponse = func(resp *http.Response) error {
 				if loc := resp.Header.Get("Location"); loc != "" && strings.HasPrefix(loc, "/") {
 					resp.Header.Set("Location", prefix+loc)
@@ -806,13 +827,13 @@ func previewHandler(previewDir string) http.Handler {
 				}
 				return nil
 			}
-			r.URL.Path = "/" + strings.Join(parts[2:], "/")
+			r.URL.Path = "/" + strings.Join(parts[4:], "/")
 			proxy.ServeHTTP(w, r)
 			return
 		}
 
-		staticDir := filepath.Join(previewDir, repo, pr)
-		http.StripPrefix("/preview/"+repo+"/"+pr, http.FileServer(http.Dir(staticDir))).ServeHTTP(w, r)
+		staticDir := filepath.Join(previewDir, fullRepo, pr)
+		http.StripPrefix("/preview/"+platform+"/"+owner+"/"+repo+"/"+pr, http.FileServer(http.Dir(staticDir))).ServeHTTP(w, r)
 	})
 }
 

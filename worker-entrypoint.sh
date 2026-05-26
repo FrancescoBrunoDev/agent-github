@@ -15,6 +15,7 @@ PLATFORM="${AGENT_PLATFORM:-github}"
 # Parse repo owner/name from URL (works for both GitHub and Gitea)
 REPO_OWNER=$(echo "${REPO_URL}" | sed -n 's|https://[^/]*/\([^/]*\)/.*|\1|p')
 REPO_NAME=$(echo "${REPO_URL}" | sed -n 's|https://[^/]*/[^/]*/\([^.]*\)\(.git\)\?$|\1|p')
+FULL_REPO="${REPO_OWNER}/${REPO_NAME}"
 
 # ---- Set up pi agent configuration ----
 mkdir -p ~/.pi/agent
@@ -114,7 +115,8 @@ create_pr() {
 
 get_pr_number() {
     if [ "$PLATFORM" = "gitea" ]; then
-        tea pr list --repo "${REPO_OWNER}/${REPO_NAME}" --head "${BRANCH}" --output json 2>/dev/null | jq -r '.[0].number' 2>/dev/null || echo ""
+        # tea pr list doesn't support --head; filter with jq
+        tea pr list --repo "${REPO_OWNER}/${REPO_NAME}" --state open --output json 2>/dev/null | jq -r ".[] | select(.head.label == \"${BRANCH}\") | .number" 2>/dev/null | head -1 || echo ""
     else
         gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo ""
     fi
@@ -324,12 +326,12 @@ rm -rf /tmp/agent-upload
 echo "==> Building containerized preview..."
 
 # Clean up any previous preview container for this PR
-PREVIEW_CONTAINER="agent-preview-${REPO_NAME}"
+PREVIEW_CONTAINER="agent-preview-${FULL_REPO}"
 docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
 
 # Get PR URL and number (platform-aware)
 if [ "$PLATFORM" = "gitea" ]; then
-    PR_NUMBER=$(tea pr list --repo "${REPO_OWNER}/${REPO_NAME}" --head "${BRANCH}" --output json 2>/dev/null | jq -r '.[0].number' 2>/dev/null || echo "")
+    PR_NUMBER=$(tea pr list --repo "${REPO_OWNER}/${REPO_NAME}" --state open --output json 2>/dev/null | jq -r ".[] | select(.head.label == \"${BRANCH}\") | .number" 2>/dev/null | head -1 || echo "")
     if [ -n "$PR_NUMBER" ]; then
         PR_URL="${GITEA_BASE}/${REPO_OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}"
     fi
@@ -341,7 +343,7 @@ else
 fi
 if [ -n "$PR_NUMBER" ]; then
     if [ -n "$PR_NUMBER" ]; then
-        PREVIEW_IMAGE="agent-preview-${REPO_NAME,,}-${PR_NUMBER}"
+        PREVIEW_IMAGE="agent-preview-${FULL_REPO,,}-${PR_NUMBER}"
         PREVIEW_CONTAINER="${PREVIEW_IMAGE}"
 
         # Build image with Nixpacks (per-repo overrides supported)
@@ -373,9 +375,9 @@ if [ -n "$PR_NUMBER" ]; then
                 
                 if [ -n "$PORT" ]; then
                     mkdir -p /agent-preview
-                    echo "$PORT" > "/agent-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                    echo "$PORT" > "/agent-preview/${FULL_REPO}-${PR_NUMBER}.port"
                     echo "==> Preview running on port ${PORT}"
-                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                 else
                     echo "==> WARNING: could not determine preview port"
                     docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -420,9 +422,9 @@ DOCKERFILE
                         done
                         if [ -n "$PORT" ]; then
                             mkdir -p /agent-preview
-                            echo "$PORT" > "/agent-preview/${REPO_NAME}-${PR_NUMBER}.port"
+                            echo "$PORT" > "/agent-preview/${FULL_REPO}-${PR_NUMBER}.port"
                             echo "==> Static preview running on port ${PORT}"
-                            post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                            post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                             PREVIEW_BUILT=true
                         else
                             docker rm -f "${PREVIEW_CONTAINER}" 2>/dev/null || true
@@ -437,9 +439,9 @@ DOCKERFILE
             if [ "$PREVIEW_BUILT" != true ]; then
                 echo "==> Falling back to file copy..."
                 if [ -d /workspace/preview ] && [ "$(ls -A /workspace/preview 2>/dev/null)" ]; then
-                    mkdir -p "/agent-preview/${REPO_NAME}/${PR_NUMBER}"
-                    cp -r /workspace/preview/* "/agent-preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1
-                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
+                    mkdir -p "/agent-preview/${FULL_REPO}/${PR_NUMBER}"
+                    cp -r /workspace/preview/* "/agent-preview/${FULL_REPO}/${PR_NUMBER}/" 2>&1
+                    post_comment "${ISSUE_NUMBER}" "🌐 **Preview:** ${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/" 2>&1 || true
                     PREVIEW_BUILT=true
                 fi
             fi
@@ -450,7 +452,7 @@ DOCKERFILE
             fi
 
             # Comment preview link on the PR
-            PREVIEW_LINK="${AGENT_BASE_URL}/preview/${REPO_NAME}/${PR_NUMBER}/"
+            PREVIEW_LINK="${AGENT_BASE_URL}/preview/${PLATFORM}/${REPO_OWNER}/${REPO_NAME}/${PR_NUMBER}/"
             if [ "$PREVIEW_BUILT" = true ]; then
                 pr_comment "${PR_NUMBER}" "🌐 **Preview:** ${PREVIEW_LINK}" 2>&1 || true
             fi
