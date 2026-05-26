@@ -83,7 +83,7 @@ post_comment() {
     local issue_num="$1"
     local body="$2"
     if [ "$PLATFORM" = "gitea" ]; then
-        echo "${body}" | tea comment --repo "${REPO_OWNER}/${REPO_NAME}" "${issue_num}" 2>&1 || true
+        tea comment --repo "${REPO_OWNER}/${REPO_NAME}" "${issue_num}" "${body}" 2>&1 || true
     else
         gh issue comment "${issue_num}" --body "${body}" 2>&1 || true
     fi
@@ -123,7 +123,7 @@ pr_comment() {
     local pr_num="$1"
     local body="$2"
     if [ "$PLATFORM" = "gitea" ]; then
-        echo "${body}" | tea comment --repo "${REPO_OWNER}/${REPO_NAME}" "${pr_num}" 2>&1 || true
+        tea comment --repo "${REPO_OWNER}/${REPO_NAME}" "${pr_num}" "${body}" 2>&1 || true
     else
         gh pr comment "${pr_num}" --body "${body}" 2>&1 || true
     fi
@@ -146,7 +146,7 @@ fi
 # ---- Post "working" comment (save ID for later deletion) ----
 WORKING_MSG="🔧 I'm working on this..."
 if [ "$PLATFORM" = "gitea" ]; then
-    WORKING_COMMENT_URL=$(tea comment --repo "${REPO_OWNER}/${REPO_NAME}" "${ISSUE_NUMBER}" <<< "${WORKING_MSG}" 2>&1 || true)
+    WORKING_COMMENT_URL=$(tea comment --repo "${REPO_OWNER}/${REPO_NAME}" "${ISSUE_NUMBER}" "${WORKING_MSG}" 2>&1 || true)
 else
     WORKING_COMMENT_URL=$(gh issue comment "${ISSUE_NUMBER}" --body "${WORKING_MSG}" 2>&1 || true)
 fi
@@ -173,7 +173,7 @@ if [ "${AGENT_CONTINUE:-false}" = "true" ]; then
     git fetch origin "${BRANCH}" 2>&1 || {
         BRANCH_MSG="❌ I couldn't find the branch \`${BRANCH}\` to continue."
         if [ "$PLATFORM" = "gitea" ]; then
-            echo "${BRANCH_MSG}" | tea comment --repo "${REPO_OWNER}/${REPO_NAME}" "${ISSUE_NUMBER}" 2>&1 || true
+            tea comment --repo "${REPO_OWNER}/${REPO_NAME}" "${ISSUE_NUMBER}" "${BRANCH_MSG}" 2>&1 || true
         else
             gh issue comment "${ISSUE_NUMBER}" --body "${BRANCH_MSG}" 2>&1 || true
         fi
@@ -204,7 +204,7 @@ ${AGENT_FEEDBACK}
 4. When done: commit with a descriptive message, push to \`${BRANCH}\`.
 5. If you took screenshots with agent-browser, save them in /workspace/.
 6. Write a summary comment:
-   \`$(if [ "$PLATFORM" = "gitea" ]; then echo "echo \"...\" | tea comment --repo ${REPO_OWNER}/${REPO_NAME} ${ISSUE_NUMBER}"; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\`
+   \`$(if [ "$PLATFORM" = "gitea" ]; then echo "tea comment --repo ${REPO_OWNER}/${REPO_NAME} ${ISSUE_NUMBER} \"...\""; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\`
 PROMPT
 else
     echo "==> NEW issue mode — will create branch ${BRANCH}"
@@ -229,7 +229,7 @@ ${CONVERSATION}
    Read package.json, config files, and source layout to gather this info. Keep it concise.
    Commit this file before starting the fix: \`git add AGENTS.md && git commit -m "docs: add AGENTS.md"\`
 1. Understand the issue and all comments thoroughly.
-2. If you need clarification, use \`$(if [ "$PLATFORM" = "gitea" ]; then echo "echo \"...\" | tea comment --repo ${REPO_OWNER}/${REPO_NAME} ${ISSUE_NUMBER}"; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\` to ask.
+2. If you need clarification, use \`$(if [ "$PLATFORM" = "gitea" ]; then echo "tea comment --repo ${REPO_OWNER}/${REPO_NAME} ${ISSUE_NUMBER} \"...\""; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\` to ask.
 3. Implement the fix. Use \`agent-browser\` to test UI changes if applicable.
 4. If your fix produces static/build output (e.g., from npm run build), copy it to a preview/ directory in /workspace/.
 5. When done:
@@ -239,7 +239,7 @@ ${CONVERSATION}
    - $(if [ "$PLATFORM" = "gitea" ]; then echo "\`tea pr create --repo ${REPO_OWNER}/${REPO_NAME} --head ${BRANCH} --base main --title \"Fix #${ISSUE_NUMBER}: ${ISSUE_TITLE}\" --description \"...\"\`"; else echo "\`gh pr create --title \"Fix #${ISSUE_NUMBER}: ${ISSUE_TITLE}\" --body \"...\"\`"; fi)
 6. If you took screenshots with agent-browser, save them in /workspace/.
 7. Write a summary comment:
-   \`$(if [ "$PLATFORM" = "gitea" ]; then echo "echo \"...\" | tea comment --repo ${REPO_OWNER}/${REPO_NAME} ${ISSUE_NUMBER}"; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\`
+   \`$(if [ "$PLATFORM" = "gitea" ]; then echo "tea comment --repo ${REPO_OWNER}/${REPO_NAME} ${ISSUE_NUMBER} \"...\""; else echo "gh issue comment ${ISSUE_NUMBER} --body"; fi) "..."\`
 PROMPT
 fi
 
