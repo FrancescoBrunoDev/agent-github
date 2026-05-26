@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -107,16 +108,19 @@ func serveCmd() *cobra.Command {
 				if classCfg.Model == "" && cfg.Pi.Settings != nil {
 					classCfg.Model = cfg.Pi.Settings.DefaultModel
 				}
+				if classCfg.BaseURL == "" && classCfg.Provider != "" {
+					classCfg.BaseURL = classifier.DefaultBaseURLForProvider(classCfg.Provider)
+				}
 				if classCfg.APIKey == "" && cfg.Pi.Auth != "" {
 					// Try to extract API key from pi auth JSON
 					classCfg.APIKey = extractAPIKeyFromPiAuth(cfg.Pi.Auth, classCfg.Provider)
 				}
 				clf = classifier.New(classCfg)
-				log.Printf("classifier: initialized (model=%s, label=%s, auto_assign=%v)",
-					classCfg.Model, humanLabelOrDefault(cfg), cfg.Classifier.AutoAssign)
+				log.Printf("classifier: initialized (model=%s, base_url=%s, label=%s, auto_assign=%v)",
+					classCfg.Model, classCfg.BaseURL, humanLabelOrDefault(cfg), cfg.Classifier.AutoAssign)
 			}
 
-			h := &handler{cfg: cfg, queue: q, ghClient: ghClient, previewMgr: previewMgr, classifier: clf}
+			h := &handler{cfg: cfg, queue: q, ghClient: ghClient, previewMgr: previewMgr, classifier: clf, labelCache: make(map[string]bool)}
 
 			mux := http.NewServeMux()
 			mux.HandleFunc(cfg.WebhookPath, h.handleWebhook)
@@ -160,11 +164,13 @@ func serveCmd() *cobra.Command {
 }
 
 type handler struct {
-	cfg        *config.Config
-	queue      *queue.Queue
-	ghClient   *github.Client
-	previewMgr *preview.Manager
-	classifier *classifier.Classifier
+	cfg          *config.Config
+	queue        *queue.Queue
+	ghClient     *github.Client
+	previewMgr   *preview.Manager
+	classifier   *classifier.Classifier
+	labelCache   map[string]bool // set of "owner/repo" that already have the classification label
+	labelCacheMu sync.Mutex
 }
 
 func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +242,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		if !alreadyTargeted {
 			log.Printf("classifier: analyzing issue %s/#%d", payload.Repo.FullName, payload.Issue.Number)
 
-			result, err := h.classifier.Classify(context.Background(), payload.Issue.Title, payload.Issue.Body)
+			result, err := h.classifier.Classify(r.Context(), payload.Issue.Title, payload.Issue.Body)
 			if err != nil {
 				log.Printf("classifier: classification failed: %v (will skip)", err)
 				// On classification failure, do nothing — fall through to normal behavior
@@ -247,7 +253,7 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 					// Simple → auto-assign to bot user, which triggers the main agent
 					log.Printf("classifier: issue %s/#%d classified as SIMPLE, assigning to %s",
 						payload.Repo.FullName, payload.Issue.Number, botUser)
-					if err := h.ghClient.AssignIssue(context.Background(), owner, repo, payload.Issue.Number, botUser); err != nil {
+					if err := h.ghClient.AssignIssue(r.Context(), owner, repo, payload.Issue.Number, botUser); err != nil {
 						log.Printf("classifier: failed to assign issue: %v", err)
 					}
 					w.WriteHeader(http.StatusOK)
@@ -260,12 +266,10 @@ func (h *handler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 					log.Printf("classifier: issue %s/#%d classified as COMPLEX, adding label %q",
 						payload.Repo.FullName, payload.Issue.Number, label)
 
-					// Ensure the label exists on the repo
-					if err := h.ghClient.EnsureLabel(context.Background(), owner, repo, label, "e99695", "Issue needs human assistance"); err != nil {
-						log.Printf("classifier: failed to ensure label %q: %v", label, err)
-					}
+					// Ensure the label exists on the repo (cached)
+					h.ensureLabelCached(r.Context(), owner, repo, label)
 
-					if err := h.ghClient.AddLabels(context.Background(), owner, repo, payload.Issue.Number, []string{label}); err != nil {
+					if err := h.ghClient.AddLabels(r.Context(), owner, repo, payload.Issue.Number, []string{label}); err != nil {
 						log.Printf("classifier: failed to add label %q: %v", label, err)
 					}
 
@@ -871,12 +875,35 @@ func configCmd() *cobra.Command {
 
 // ---- Classifier helpers ----
 
+const defaultLabelColor = "e99695"
+
 // humanLabelOrDefault returns the configured human-assistance label, or the default.
 func humanLabelOrDefault(cfg *config.Config) string {
 	if cfg.Classifier.HumanAssistanceLabel != "" {
 		return cfg.Classifier.HumanAssistanceLabel
 	}
 	return "needs-human-assistance"
+}
+
+// ensureLabelCached calls EnsureLabel on GitHub API only once per repo.
+// Subsequent calls for the same repo are no-ops.
+func (h *handler) ensureLabelCached(ctx context.Context, owner, repo, label string) {
+	key := owner + "/" + repo
+	h.labelCacheMu.Lock()
+	if h.labelCache[key] {
+		h.labelCacheMu.Unlock()
+		return
+	}
+	h.labelCacheMu.Unlock()
+
+	if err := h.ghClient.EnsureLabel(ctx, owner, repo, label, defaultLabelColor, "Issue needs human assistance"); err != nil {
+		log.Printf("classifier: failed to ensure label %q: %v", label, err)
+		return
+	}
+
+	h.labelCacheMu.Lock()
+	h.labelCache[key] = true
+	h.labelCacheMu.Unlock()
 }
 
 // extractAPIKeyFromPiAuth attempts to parse the Pi auth JSON to find an API key

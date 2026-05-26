@@ -160,6 +160,7 @@ func buildClassificationPrompt(title, body string) string {
 }
 
 // LabelForClassification returns the label to apply based on classification result.
+// Deprecated: use in main handler logic instead.
 func LabelForClassification(result Result, humanLabel string) string {
 	if result.Classification == ClassificationComplex {
 		if humanLabel == "" {
@@ -168,4 +169,25 @@ func LabelForClassification(result Result, humanLabel string) string {
 		return humanLabel
 	}
 	return ""
+}
+
+// KnownBaseURLs maps well-known providers to their default API base URLs.
+var KnownBaseURLs = map[string]string{
+	"openai":    "https://api.openai.com/v1",
+	"anthropic": "https://api.anthropic.com/v1",
+	"google":    "https://generativelanguage.googleapis.com/v1beta/openai",
+	"groq":      "https://api.groq.com/openai/v1",
+	"deepseek":  "https://api.deepseek.com/v1",
+	"mistral":   "https://api.mistral.ai/v1",
+	"xai":       "https://api.x.ai/v1",
+	"opencode":  "https://api.opencode.ai/v1",
+}
+
+// DefaultBaseURLForProvider returns the known base URL for a provider,
+// or falls back to OpenAI v1 if unknown.
+func DefaultBaseURLForProvider(provider string) string {
+	if url, ok := KnownBaseURLs[provider]; ok {
+		return url
+	}
+	return KnownBaseURLs["openai"]
 }
